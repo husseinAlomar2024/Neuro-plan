@@ -1,6 +1,7 @@
 """The live coach: routes chat to the LLM or offline engine, keeps history, reacts to events."""
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
@@ -44,6 +45,8 @@ class Coach:
         self._plan_timer: Optional[threading.Timer] = None
         self._plan_pending: list[dict[str, Any]] = []
         self._tip_index = 0
+        self._confirm_seq = 0
+        self._pending_confirmations: dict[str, dict[str, Any]] = {}
         self._queue: "queue.Queue[Optional[Callable[[], None]]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
         self._closed = False
@@ -306,6 +309,18 @@ class Coach:
         self.repo.set_setting("summarised_upto_id", str(older[-1].id))
 
     # ------------------------------------------------------------ option buttons / cards
+    def request_confirmation(self, tool: str, args: dict[str, Any], preview: str) -> ChatMessage:
+        """Show a Confirm/Cancel card for a tool the student triggered from the UI."""
+        card: dict[str, Any] = {"tool": tool, "preview": preview}
+        if len(json.dumps(args, default=str)) > 2000:      # e.g. import_data: keep the payload in memory
+            self._confirm_seq += 1
+            token = f"c{self._confirm_seq}"
+            self._pending_confirmations[token] = args
+            card["token"] = token
+        else:
+            card["args"] = args
+        return self._post("coach", "This needs your confirmation.", {"confirmations": [card]})
+
     def select_option(self, payload: dict[str, Any], label: str = "") -> Optional[ChatMessage]:
         kind = payload.get("type")
         if kind == "say":
@@ -313,7 +328,12 @@ class Coach:
         if label:
             self._post("user", label)
         if kind == "confirm":
-            return self._post_reply(self._run([ToolCall(payload["tool"], dict(payload["args"]))], "ui"))
+            args = payload.get("args")
+            if args is None:
+                args = self._pending_confirmations.pop(str(payload.get("token")), None)
+            if args is None:
+                return self._post("coach", "That confirmation has expired — please start the action again.")
+            return self._post_reply(self._run([ToolCall(payload["tool"], dict(args))], "ui"))
         if kind == "cancel":
             return self._post("coach", "Okay — cancelled, nothing was changed.")
         if kind == "ack":

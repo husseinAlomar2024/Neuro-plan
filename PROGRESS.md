@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## Current phase
-P6 — GUI views + coach panel + timer (in progress)
+P7 — proactive events wiring (in progress)
 
 ## Done
 - P1: `config.py`, `models.py`, `db/schema.sql`, `db/repository.py`, `seed.py`, `tests/test_repository.py` (12 tests green).
@@ -9,9 +9,9 @@ P6 — GUI views + coach panel + timer (in progress)
 - P3: `events.py`, `tools/registry.py` (schemas + validation, Anthropic/OpenAI export), `tools/executor.py` (transactional, snapshot undo, events, risk detection, plan diff), `tools/matching.py`; `tests/test_tools.py`, `tests/test_reviews.py` (150 tests green). Regeneration keeps ids of unchanged blocks.
 - P4: `coach/offline_engine.py` (intent parser, templates, offline onboarding interview), `coach/types.py`; `tests/test_offline_parser.py` (211 tests green).
 - P5: `coach/providers.py` (Anthropic, OpenAI-compatible, Fake; keyring keys), `coach/prompts.py`, `coach/llm_engine.py` (6-round agent loop), `coach/coach.py` (routing, offline fallback, daily cap, history summary, all proactive event handlers, option/confirm cards); `tests/test_coach.py` (242 tests green).
+- P6: `timer.py` (pomodoro state machine, never auto-logs), `ui/theme.py`, `ui/widgets/{common,pomodoro}.py`, `ui/views/{today,week,subjects,reviews,settings}.py`, `ui/coach_panel.py`, `ui/app.py`, `main.py`; `tests/test_timer.py`, `tests/test_gui_smoke.py` (252 tests green). Real launch checked on a temp DB.
 
 ## Next
-- P6 GUI + timer
 - P7 proactive event wiring
 - P8 polish, README, build_exe.bat, PyInstaller dry run
 
