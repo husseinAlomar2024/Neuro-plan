@@ -100,10 +100,11 @@ class Repository:
                             ddl += " NOT NULL"
                     self._conn.execute(ddl)
         ref.close()
-        for key, value in config.DEFAULT_SETTINGS.items():
-            if self.get_setting(key) is None:
-                self.set_setting(key, value)
-        self.set_setting("schema_version", str(config.SCHEMA_VERSION))
+        with self.transaction():
+            for key, value in config.DEFAULT_SETTINGS.items():
+                if self.get_setting(key) is None:
+                    self.set_setting(key, value)
+            self.set_setting("schema_version", str(config.SCHEMA_VERSION))
 
     # ------------------------------------------------------------ settings
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:

@@ -85,6 +85,7 @@ class _Sim:
         self.assessments = sorted(assessments, key=lambda a: (a.date, a.id))
         self.carry = 0.0
         self.last_day = last_day
+        self.last_unit = self.max_done()   # highest unit number any block has referred to
         self.q = config.QUANTUM[subject.category]
         self.pom = config.POMODORO[subject.category]
         self.brk = config.BREAK_MIN[self.pom]
@@ -164,6 +165,7 @@ class _Cand:
     backlog: int = 0
     budget: float = 0.0
     n: int = 0
+    debited: int = 0          # blocks paid from the budget (extra fill blocks are not)
     blocks: list[StudyBlock] = field(default_factory=list)
 
     @property
@@ -420,6 +422,7 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
             if (k - c.sim.last_day >= config.STARVATION_GAP_DAYS and c.max_blocks >= 1
                     and used + c.sim.cost <= room + _EPS):
                 c.n += 1
+                c.debited += 1
                 c.budget -= c.sim.cost
                 used += c.sim.cost
         while True:
@@ -429,8 +432,17 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
                 break
             c = max(ready, key=lambda c: (c.budget, c.w, -c.sim.s.id))
             c.n += 1
+            c.debited += 1
             c.budget -= c.sim.cost
             used += c.sim.cost
+
+        def drop_block(c: _Cand) -> None:
+            nonlocal used
+            c.n -= 1
+            used -= c.sim.cost
+            if c.debited > c.n:
+                c.debited -= 1
+                c.budget += c.sim.cost
 
         def try_fill(pool: list[_Cand]) -> Optional[_Cand]:
             # the last block of the day has no trailing break, so one break may be waived
@@ -438,8 +450,7 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
             current = breaks + [x.sim.brk for x in cands for _ in range(x.n)]
             for c in pool:
                 if c.n < c.max_blocks and used + c.sim.cost - min(current + [c.sim.brk]) <= room + _EPS:
-                    c.n += 1
-                    c.budget -= c.sim.cost
+                    c.n += 1          # an extra block: the carry is left untouched (SPEC step 5)
                     used += c.sim.cost
                     return c
             return None
@@ -457,9 +468,7 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
         light = [c for c in by_weight if not c.heavy]
         while sep_count() > 0 and not _heavy_feasible(heavy_count(), sep_count()):
             victim = min((c for c in cands if c.heavy and c.n > 0), key=lambda c: (c.w, -c.sim.s.id))
-            victim.n -= 1
-            victim.budget += victim.sim.cost
-            used -= victim.sim.cost
+            drop_block(victim)
             try_fill(light)
 
         # ---- step 6: block content
@@ -474,12 +483,14 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
                     practiced = True
                     a = sim.nearest(d)
                     assert a is not None
-                    blk = StudyBlock(0, d, "", sim.s.id, sim.max_done(), config.PRACTICE, sim.pom,
+                    sim.last_unit = max(sim.last_unit, sim.max_done())
+                    blk = StudyBlock(0, d, "", sim.s.id, sim.last_unit, config.PRACTICE, sim.pom,
                                      sim.q, practice_text(a))
                 else:
                     idx = sim.next_index()
                     assert idx is not None
                     num = sim.units[idx][0]
+                    sim.last_unit = max(sim.last_unit, num)
                     btype = config.CATCHUP if num <= sim.s.expected_units_by_now else config.PROGRESS
                     blk = StudyBlock(0, d, "", sim.s.id, num, btype, sim.pom, sim.q,
                                      task_text(sim.s.mastery, num))
@@ -488,8 +499,8 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
                         unit_done(sim, done_num, d, record)
                 c.blocks.append(blk)
             made = len(c.blocks)
-            used -= (c.n - made) * sim.cost
-            c.budget += (c.n - made) * sim.cost
+            while c.n > made:
+                drop_block(c)
             sim.carry = max(-float(sim.cost), min(float(sim.cost), c.budget))
             if made:
                 sim.last_day = k
