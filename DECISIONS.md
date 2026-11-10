@@ -46,3 +46,19 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - "N behind in X" sets `expected_units_by_now = done + N` (capped at the unit count).
 - "I couldn't study today, rebalance" → `set_day_override(today, 0)` then `regenerate_plan`.
 - Onboarding also asks for weekly availability when every weekday has 0 minutes (order: subjects → availability → units → assessment → expected). The offline interview keeps one pending question in memory and reads short answers ("12", "in 10 days", "none", "7 expected, 3 done").
+
+## LLM coach
+- Anthropic calls use the Messages API through the official SDK with `output_config.effort = "low"` (chat-sized work that must fit the 30 s timeout), no sampling parameters, thinking left at the model default, `max_tokens = 8000`, `max_retries = 1`. If a (user-configured, older) model rejects the effort setting the call is retried once without it.
+- Assistant turns inside a tool loop are sent back to Anthropic unchanged (thinking blocks must not be edited); all tool results of one turn go into a single user message.
+- The stable system prompt is a cached prefix (`cache_control`); the volatile state snapshot and summary go in a second system block after it.
+- A model refusal (`stop_reason = "refusal"`) is treated like a provider error: one-line notice, then the offline engine answers. Server-side refusal fallbacks are not enabled because model names are free-form settings and the beta parameter is not valid for every model.
+- OpenAI-compatible endpoints use Chat Completions with function tools; no `max_tokens` is sent (parameter names differ between vendors). Without a key but with a base URL (Ollama) a placeholder key is used.
+- The daily call cap counts every model call (chat rounds, proactive messages, summaries). When it is reached chat falls back to the offline engine (notice once per day) and proactive messages use templates.
+- An authentication error switches the coach to offline for the rest of the session (notice once); network/rate errors only affect the current message.
+- If a provider error happens after tools already ran in the same turn, the turn is not replayed offline (that would apply the change twice); the executed actions are reported instead.
+- The LLM cannot pass `confirmed=true` itself and cannot call UI-only tools; confirmation only comes from the student's click on the card.
+- Proactive rules: `plan_changed` speaks only for UI-initiated changes that are not block/review actions (chat replies and block cards already explain themselves), debounced 3 s with diffs merged. `block_finished`/`block_skipped` speak for UI actions only. Risk options, skip questions, review nudges and break tips are templates (exact numbers, no model call); briefing, plan-change note, session recap, onboarding opener and end-of-day check-in use the background model when available.
+- Proactive levels: `light` = onboarding, briefing, risks, missed/skipped blocks, end-of-day; `full` adds plan-change notes, block lines/recap, review nudge, break tips; `off` = silent.
+- "Too hard" lowers mastery by 1 (min 1); "Sick" offers a one-click "Clear today"; all skip answers re-run the plan and report what moved.
+- Summarisation marker is stored as setting `summarised_upto_id` (the `chat_messages` table has no such column).
+- End-of-day on close: the first close of a day without a check-in posts the check-in and keeps the window open; the second close exits.

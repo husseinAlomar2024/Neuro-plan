@@ -1,6 +1,7 @@
 """Shared fixtures. Every test uses a temporary database and a fixed 'today'."""
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -9,6 +10,9 @@ from typing import Iterator
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["NEUROPLAN_NO_KEYRING"] = "1"      # tests never touch the real OS keyring
+os.environ.pop("ANTHROPIC_API_KEY", None)     # ... and never call a real LLM API
+os.environ.pop("OPENAI_API_KEY", None)
 
 from neuroplan.db.repository import Repository  # noqa: E402
 from neuroplan.seed import seed_demo  # noqa: E402
