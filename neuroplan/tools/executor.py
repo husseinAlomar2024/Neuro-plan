@@ -126,7 +126,10 @@ class ToolExecutor:
             if not self.repo.list_assessments(s.id) and f"{s.id}:assessment" not in dismissed:
                 missing.append({"subject": s.name, "field": "assessment"})
         order = {"units": 0, "assessment": 1, "expected": 2}
-        return sorted(missing, key=lambda m: order[m["field"]])
+        missing.sort(key=lambda m: order[m["field"]])
+        if all(av.minutes == 0 for av in self.repo.get_availability().values()):
+            missing.insert(0, {"subject": None, "field": "availability"})
+        return missing
 
     def streak_days(self) -> int:
         today = self.today()
@@ -185,7 +188,8 @@ class ToolExecutor:
             self.bus.emit(events.PLAN_CHANGED, diff=diff, tool=spec.name, source=source,
                           summary=describe_diff(diff, today))
         self._detect_risks(source)
-        return ToolResult(True, summary, data, action_id=action_id, tool=spec.name)
+        return ToolResult(True, summary, data, action_id=action_id, tool=spec.name,
+                          plan_change=describe_diff(diff, today) if diff else "")
 
     def _plan_minutes(self, today: date) -> dict[tuple[str, int], int]:
         out: dict[tuple[str, int], int] = {}
@@ -388,7 +392,8 @@ class ToolExecutor:
                      "reviews_due": reviews_due},
             "risks": [{"assessment": r.title, "subject": r.subject_name, "date": r.date.isoformat(),
                        "shortfall_min": r.shortfall_min} for r in self.plan().risks],
-            "missing_info": [f"{m['subject']}: {m['field']}" if m["subject"] else "no subjects yet"
+            "missing_info": [f"{m['subject']}: {m['field']}" if m["subject"] else
+                             ("no subjects yet" if m["field"] == "subjects" else "weekly availability")
                              for m in self.missing_info()],
         }
         return f"{len(subjects)} subject(s), {len(today_blocks)} block(s) today", data
@@ -551,7 +556,13 @@ class ToolExecutor:
         if "expected_units_by_now" not in a and "done_units" not in a:
             raise ToolError("set_progress: give 'expected_units_by_now' and/or 'done_units'")
         s = self._subject(a["subject"])
-        self._ensure_units(s, max(a.get("expected_units_by_now", 0), a.get("done_units", 0)))
+        total = len(self.repo.list_units(s.id))
+        wanted = max(a.get("expected_units_by_now", 0), a.get("done_units", 0))
+        if total == 0:
+            self._ensure_units(s, wanted)
+        elif wanted > total:
+            field = "expected_units_by_now" if a.get("expected_units_by_now", 0) > total else "done_units"
+            raise ToolError(f"set_progress: '{field}' ({wanted}) exceeds the {total} unit(s) of {s.name}")
         parts: list[str] = []
         if "done_units" in a:
             self._set_done_units(s, a["done_units"])

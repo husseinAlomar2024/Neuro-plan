@@ -75,6 +75,8 @@ BAD_CALLS: list[tuple[str, dict[str, Any], str]] = [
     ("set_progress", {"subject": "Deep Learning"}, "give 'expected_units_by_now' and/or 'done_units'"),
     ("set_progress", {"subject": "Nope", "done_units": 1}, "Unknown subject 'Nope'"),
     ("set_progress", {"subject": "Deep Learning", "done_units": -1}, "'done_units' must be between 0 and 200"),
+    ("set_progress", {"subject": "Deep Learning", "expected_units_by_now": 99}, "exceeds the 12 unit(s)"),
+    ("set_progress", {"subject": "Deep Learning", "done_units": 13}, "'done_units' (13) exceeds"),
     ("log_study", {"subject": "Deep Learning"}, "either 'minutes' or 'units'"),
     ("log_study", {"subject": "Deep Learning", "minutes": 30, "units": 1}, "either 'minutes' or 'units'"),
     ("log_study", {"subject": "Deep Learning", "minutes": 0}, "'minutes' must be between 1 and 600"),
@@ -440,6 +442,8 @@ def test_missing_info_and_dismiss(repo: Repository) -> None:
     ex = ToolExecutor(repo, today_fn=lambda: TODAY)
     assert ex.missing_info() == [{"subject": None, "field": "subjects"}]
     assert ex.execute("upsert_subject", {"name": "Physics"}).ok
+    assert [m["field"] for m in ex.missing_info()] == ["availability", "units", "assessment", "expected"]
+    assert ex.execute("set_weekly_availability", {"days": [{"weekday": "mon", "minutes": 120}]}).ok
     assert [m["field"] for m in ex.missing_info()] == ["units", "assessment", "expected"]
     assert ex.execute("upsert_subject", {"name": "Physics", "total_units": 10}).ok
     assert ex.execute("set_progress", {"subject": "Physics", "expected_units_by_now": 0}).ok

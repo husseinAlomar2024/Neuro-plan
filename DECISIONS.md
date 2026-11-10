@@ -38,3 +38,11 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - Date arguments accept `today` / `tomorrow` besides ISO dates; integer arguments accept numeric strings.
 - Undo of `update_settings` restores the previous setting values; `undo_last` itself is logged but not undoable.
 - Streak = consecutive days (ending today, or yesterday if nothing is logged yet today) with a done/partial block or a unit finished.
+
+## Offline coach
+- "Weekdays" means Sun–Thu and "weekend" Fri–Sat (as in the seed data); days named explicitly in the same sentence are excluded from the group.
+- "next thursday" / "on thursday" = the first Thursday strictly after today.
+- A generic word ("exam", "test", "امتحان") updates the subject's only upcoming midterm/final if there is exactly one, otherwise adds a `final`; a specific kind ("midterm", "quiz") updates an upcoming assessment of that kind or adds one.
+- "N behind in X" sets `expected_units_by_now = done + N` (capped at the unit count).
+- "I couldn't study today, rebalance" → `set_day_override(today, 0)` then `regenerate_plan`.
+- Onboarding also asks for weekly availability when every weekday has 0 minutes (order: subjects → availability → units → assessment → expected). The offline interview keeps one pending question in memory and reads short answers ("12", "in 10 days", "none", "7 expected, 3 done").

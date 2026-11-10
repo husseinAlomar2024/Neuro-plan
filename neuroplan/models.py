@@ -172,10 +172,13 @@ class ToolResult:
     preview: str = ""
     action_id: Optional[int] = None
     tool: str = ""
+    plan_change: str = ""        # what the regeneration moved, e.g. "Today: Deep Learning −50 min"
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"ok": self.ok, "summary": self.summary, "data": self.data}
         if self.needs_confirmation:
             out["needs_confirmation"] = True
             out["preview"] = self.preview
+        if self.plan_change:
+            out["plan_change"] = self.plan_change
         return out
