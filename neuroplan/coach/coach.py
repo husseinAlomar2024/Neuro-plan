@@ -22,6 +22,7 @@ from .types import ActionRecord, EngineReply, ToolCall
 
 log = logging.getLogger(__name__)
 _QUIET_PLAN_TOOLS = {"complete_block", "skip_block", "complete_review", "lock_block", "undo_last"}
+_ONBOARDING_TOOLS = {"upsert_subject", "import_data", "reset_demo_data"}
 
 
 class Coach:
@@ -46,6 +47,7 @@ class Coach:
         self._plan_pending: list[dict[str, Any]] = []
         self._tip_index = 0
         self._confirm_seq = 0
+        self._last_onboarding_key = ""
         self._pending_confirmations: dict[str, dict[str, Any]] = {}
         self._queue: "queue.Queue[Optional[Callable[[], None]]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
@@ -67,6 +69,7 @@ class Coach:
         }
         for name in self._handlers:
             self.bus.subscribe(name, self.on_event)
+        self.bus.subscribe(events.STATE_CHANGED, self._on_state_changed)
 
     # ------------------------------------------------------------ infrastructure
     def on_event(self, event: Event) -> None:
@@ -481,6 +484,16 @@ class Coach:
         self.bus.emit(events.END_OF_DAY, trigger="close")
         return True
 
+    def _on_state_changed(self, event: Event) -> None:
+        """A subject was added/changed in the UI: if the plan now lacks information, ask for it."""
+        if event.payload.get("source") == "ui" and event.payload.get("tool") in _ONBOARDING_TOOLS:
+            self._dispatch(self._check_onboarding)
+
+    def _check_onboarding(self) -> None:
+        missing = self.executor.missing_info()
+        if missing and json.dumps(missing[0], sort_keys=True) != self._last_onboarding_key:
+            self.bus.emit(events.ONBOARDING_NEEDED, missing=missing)
+
     # ---- event handlers (run on the worker thread)
     def _on_error(self, event: Event) -> None:
         self._post("system_event", str(event.payload.get("message", "Unknown error")))
@@ -582,6 +595,7 @@ class Coach:
         question = self.offline.start_interview()
         if question is None:
             return
+        self._last_onboarding_key = json.dumps(self.offline.pending, sort_keys=True)
         self._speak(self._background_text("onboarding_needed", question))
 
     def briefing_template(self) -> str:

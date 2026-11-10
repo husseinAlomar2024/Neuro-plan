@@ -498,3 +498,24 @@ def test_api_keys_never_reach_sqlite_or_logs(seeded: Repository, monkeypatch: py
     dump = json.dumps(seeded.export_all())
     assert "sk-ant-test-secret-value" not in dump
     assert "api_key" not in config.DEFAULT_SETTINGS and "api_key" not in config.EDITABLE_SETTINGS
+
+
+def test_subject_added_in_ui_triggers_one_onboarding_question(seeded: Repository) -> None:
+    coach, _, executor = make(seeded, offline=True)
+    before = len(coach_messages(seeded))
+    assert executor.execute("upsert_subject", {"name": "Databases", "total_units": 8}, "ui").ok
+    asked = [m.text for m in coach_messages(seeded)[before:]]
+    assert any("next exam, quiz or deadline for Databases" in t for t in asked)
+    count = len([t for t in (m.text for m in coach_messages(seeded)) if "deadline for Databases" in t])
+    assert executor.execute("upsert_subject", {"name": "Databases", "mastery": 4}, "ui").ok
+    again = len([t for t in (m.text for m in coach_messages(seeded)) if "deadline for Databases" in t])
+    assert again == count == 1, "the same question is not repeated after every edit"
+    # the answer in chat continues the interview
+    reply = coach.handle_user_message("in 20 days")
+    assert reply is not None and len(seeded.list_assessments()) == 6
+    assert "how many units should you have covered" in reply.text
+    # subjects added through chat do not trigger the extra proactive question
+    quiet = len(coach_messages(seeded))
+    assert executor.execute("upsert_subject", {"name": "Networks", "total_units": 5}, "chat_llm").ok
+    later = [m.text for m in coach_messages(seeded)[quiet:]]
+    assert not any("Networks" in t and "?" in t and "short" not in t for t in later), later

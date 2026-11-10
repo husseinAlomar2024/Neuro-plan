@@ -141,3 +141,40 @@ def test_gui_confirmation_card_for_delete(app, seeded: Repository) -> None:  # t
     pump(app, 0.1)
     created = seeded.get_subject_by_name("Databases")
     assert created is not None and len(seeded.list_units(created.id)) == 8
+
+
+def test_gui_proactive_wiring(app, seeded: Repository) -> None:  # type: ignore[no-untyped-def]
+    """Timer breaks, the end-of-day clock and the close button all reach the coach through events."""
+    from datetime import datetime
+    app.show_view("Today")
+    pump(app)
+    texts = lambda: [m.text for m in seeded.list_messages() if m.role == "coach"]  # noqa: E731
+    # pomodoro break -> break_started -> local tip (no LLM)
+    plan = app.read("get_plan")["days"][0]["blocks"]
+    block = next(b for b in plan if b["status"] == "pending" and b["type"] != "REVIEW")
+    app.views["Today"]._start(block)
+    app.timer.tick(block["min"] * 60)
+    pump(app, until=lambda: any(t.startswith("Break") for t in texts()))
+    assert any(t.startswith("Break") for t in texts())
+    # Done on the card -> block_finished one-liner
+    app.views["Today"].pomodoro._done()
+    pump(app, until=lambda: any(t.startswith("✓ ") for t in texts()))
+    assert any(t.startswith("✓ ") and "done (50 min)" in t for t in texts())
+    # skipping from the timeline -> "what happened?" with quick chips
+    other = next(b for b in seeded.list_blocks(TODAY, TODAY) if b.status == "pending")
+    assert app.call("skip_block", {"id": other.id}).ok
+    pump(app, until=lambda: any("What happened?" in t for t in texts()))
+    ask = next(m for m in seeded.list_messages() if "What happened?" in m.text)
+    assert len(ask.actions["options"]) == 4
+    # minute timer -> end_of_day once the configured time has passed
+    app.coach.now = lambda: datetime(2026, 11, 10, 22, 5)
+    app._minute()
+    pump(app, until=lambda: any("End-of-day check-in" in t for t in texts()))
+    assert sum("End-of-day check-in" in t for t in texts()) == 1
+    # closing without a check-in today posts it and keeps the window open once
+    seeded.set_setting("last_checkin_date", "")
+    app._on_close()
+    pump(app, until=lambda: sum("End-of-day check-in" in t for t in texts()) == 2)
+    assert app.winfo_exists() and sum("End-of-day check-in" in t for t in texts()) == 2
+    app._on_close()
+    assert app._closing
