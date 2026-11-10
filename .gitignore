@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+neuroplan.db
+neuroplan.db.bak*
+*.log
+*.log.*
+build/
+dist/
+*.spec
