@@ -4,6 +4,7 @@ Threading rule: background threads never touch widgets. They call ``post_ui`` an
 picks the work up from a queue through ``after``."""
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 from datetime import date
@@ -172,10 +173,8 @@ class NeuroPlanApp(ctk.CTk):
     def toast(self, text: str, error: bool = False) -> None:
         self.toast_label.configure(text=text, text_color=theme.DANGER if error else theme.MUTED)
         if self._toast_after is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.after_cancel(self._toast_after)
-            except Exception:
-                pass
         if not self._closing:
             self._toast_after = self.after(6000, lambda: self.toast_label.configure(text=""))
 
@@ -247,10 +246,8 @@ class NeuroPlanApp(ctk.CTk):
     def _focus_ended(self) -> None:
         """Timer callback (UI thread): show the confirmation card. Nothing is logged yet."""
         self.show_view("Today")
-        try:
+        with contextlib.suppress(Exception):
             self.bell()
-        except Exception:
-            pass
 
     # ------------------------------------------------------------ closing
     def _on_close(self) -> None:
@@ -267,9 +264,7 @@ class NeuroPlanApp(ctk.CTk):
     def destroy(self) -> None:
         self._closing = True
         for after_id in list(self._after_ids.values()) + ([self._toast_after] if self._toast_after else []):
-            try:
+            with contextlib.suppress(Exception):
                 self.after_cancel(after_id)
-            except Exception:
-                pass
         self.coach.shutdown()
         super().destroy()

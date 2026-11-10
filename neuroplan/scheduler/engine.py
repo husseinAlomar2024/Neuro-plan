@@ -455,8 +455,9 @@ def generate_plan(state: State, start: date, days: int) -> PlanResult:
                     return c
             return None
 
-        while try_fill(by_weight) is not None:
-            pass
+        filled = try_fill(by_weight)
+        while filled is not None:
+            filled = try_fill(by_weight)
 
         # keep HEAVY runs separable: h <= run * (separators + 1) whenever a non-HEAVY block exists
         def heavy_count() -> int:

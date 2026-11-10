@@ -466,3 +466,31 @@ def test_internal_error_rolls_back_and_reports(ex: ToolExecutor, seeded: Reposit
     assert not result.ok and "disk on fire" in result.summary
     assert seeded.snapshot() == before, "the transaction is rolled back"
     assert len(errors) == 1 and "Nothing was changed" in errors[0].payload["message"]
+
+
+def test_undo_skips_system_housekeeping_and_locks(ex: ToolExecutor, seeded: Repository) -> None:
+    before = seeded.snapshot()
+    assert ex.execute("set_day_override", {"date": ISO, "minutes": 90}, "chat_offline").ok
+    assert ex.execute("regenerate_plan", {}, "system").ok
+    assert ex.execute("lock_block", {"id": first_pending(seeded)}, "ui").ok
+    undone = ex.execute("undo_last")
+    assert undone.ok and "set_day_override" in undone.summary
+    assert seeded.snapshot() == before, "the lock and the system re-plan are rolled back with it"
+    assert not ex.execute("undo_last").ok
+
+
+def test_exported_schemas_are_plain(ex: ToolExecutor) -> None:
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            assert "format" not in node
+            assert not isinstance(node.get("type"), list)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(registry.anthropic_tools())
+    walk(registry.openai_tools())
+    # the executor itself still accepts ids and names for subjects, and 'today' for dates
+    assert ex.execute("get_plan", {"date_from": "today"}).ok

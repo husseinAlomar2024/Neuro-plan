@@ -2,6 +2,7 @@
 quick chips, typing indicator. Collapsible to a strip with an unread badge."""
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any, Optional
 
 import customtkinter as ctk
@@ -232,8 +233,6 @@ class CoachPanel(ctk.CTkFrame):
 
     def _scroll_down(self) -> None:
         def move() -> None:
-            try:
+            with contextlib.suppress(Exception):       # the panel may already be destroyed
                 self.messages._parent_canvas.yview_moveto(1.0)  # noqa: SLF001 - no public API for this
-            except Exception:
-                pass
         self.after(60, move)

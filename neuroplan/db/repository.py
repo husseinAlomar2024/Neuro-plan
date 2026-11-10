@@ -394,12 +394,15 @@ class Repository:
                               bool(r["undone"]))
 
     def last_undoable(self) -> Optional[ActionLogEntry]:
+        """The latest action the student would recognise as theirs: housekeeping by the app
+        (source 'system') and block locks are not undo targets."""
         rows = self._q("SELECT * FROM action_log WHERE undone = 0 AND inverse_json IS NOT NULL "
-                       "ORDER BY id DESC LIMIT 1")
+                       "AND source != 'system' AND tool != 'lock_block' ORDER BY id DESC LIMIT 1")
         return self._action(rows[0]) if rows else None
 
     def mark_undone(self, action_id: int) -> None:
-        self._x("UPDATE action_log SET undone = 1 WHERE id = ?", (action_id,))
+        """Mark the action and everything logged after it as undone (the snapshot rolls those back too)."""
+        self._x("UPDATE action_log SET undone = 1 WHERE id >= ?", (action_id,))
 
     def list_actions(self, limit: int = 50) -> list[ActionLogEntry]:
         return [self._action(r) for r in

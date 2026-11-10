@@ -13,7 +13,7 @@ BREAK = "break"
 
 
 class TimerError(Exception):
-    pass
+    """An operation that does not fit the timer's current state (e.g. confirming with nothing to confirm)."""
 
 
 @dataclass

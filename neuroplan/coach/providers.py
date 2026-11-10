@@ -7,6 +7,7 @@ Messages use a neutral format so the engine does not care which provider is acti
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -87,10 +88,8 @@ def set_api_key(provider: str, key: str) -> bool:
         if key:
             kr.set_password(config.KEYRING_SERVICE, provider, key)
         else:
-            try:
+            with contextlib.suppress(Exception):       # nothing stored: nothing to delete
                 kr.delete_password(config.KEYRING_SERVICE, provider)
-            except Exception:
-                pass
         return True
     except Exception:
         log.warning("keyring write failed")
@@ -101,11 +100,12 @@ def set_api_key(provider: str, key: str) -> bool:
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, http_client: Any = None) -> None:
+        """``http_client`` lets tests plug in a mock transport; production uses the SDK default."""
         import anthropic
         self._anthropic = anthropic
         self._client = anthropic.Anthropic(api_key=api_key, timeout=float(config.LLM_TIMEOUT_S),
-                                           max_retries=config.LLM_MAX_RETRIES)
+                                           max_retries=config.LLM_MAX_RETRIES, http_client=http_client)
         self._no_effort: set[str] = set()      # models that reject output_config.effort
 
     @staticmethod
@@ -187,11 +187,12 @@ class OpenAICompatProvider:
     """Chat Completions with tools: OpenAI, DeepSeek, Ollama (http://localhost:11434/v1), …"""
     name = "openai_compat"
 
-    def __init__(self, api_key: str, base_url: str = "") -> None:
+    def __init__(self, api_key: str, base_url: str = "", http_client: Any = None) -> None:
         import openai
         self._openai = openai
         self._client = openai.OpenAI(api_key=api_key, base_url=base_url or None,
-                                     timeout=float(config.LLM_TIMEOUT_S), max_retries=config.LLM_MAX_RETRIES)
+                                     timeout=float(config.LLM_TIMEOUT_S), max_retries=config.LLM_MAX_RETRIES,
+                                     http_client=http_client)
 
     @staticmethod
     def convert(system: str, context: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

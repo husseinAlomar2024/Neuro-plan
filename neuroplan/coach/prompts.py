@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .. import config
-
 SYSTEM_PROMPT = """You are the study coach inside NeuroPlan, a desktop study planner for a university student.
 
 Voice: concise, warm, direct. Reply in at most 120 words unless the student asks for more. The student may write in English, Arabic or a mix — always reply in the language of their last message. Suggest, never lecture.
@@ -71,6 +69,3 @@ def approx_tokens(text: str) -> int:
     """Rough token estimate (4 characters per token) used by tests to keep prompts small."""
     return len(text) // 4
 
-
-__all__ = ["SYSTEM_PROMPT", "EVENT_INSTRUCTIONS", "SUMMARY_INSTRUCTION", "build_context", "event_message",
-           "approx_tokens", "config"]

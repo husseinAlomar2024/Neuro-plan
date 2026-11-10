@@ -5,7 +5,6 @@ import json
 from datetime import date
 from typing import Optional
 
-from .. import config
 from ..db.repository import Repository
 from ..models import PlanResult, State, StudyBlock
 from .engine import generate_plan
@@ -77,5 +76,3 @@ def regenerate(repo: Repository, today: date, days: Optional[int] = None) -> Pla
 def _identity(b: StudyBlock) -> tuple[object, ...]:
     return (b.plan_date, b.subject_id, b.block_type, b.unit_number, b.duration_min, b.pomodoro, b.task_text)
 
-
-__all__ = ["build_state", "compute_plan", "regenerate", "horizon_days", "cap_boost_ids", "config"]

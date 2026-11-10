@@ -62,3 +62,16 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - "Too hard" lowers mastery by 1 (min 1); "Sick" offers a one-click "Clear today"; all skip answers re-run the plan and report what moved.
 - Summarisation marker is stored as setting `summarised_upto_id` (the `chat_messages` table has no such column).
 - End-of-day on close: the first close of a day without a check-in posts the check-in and keeps the window open; the second close exits.
+- Tool schemas sent to providers are simplified copies (no `format` keyword, no union types) because some OpenAI-compatible servers reject them; the executor's own validation still accepts ids for subjects, weekday names, `today`/`tomorrow`.
+- `undo_last` targets the latest student-visible action: actions logged by the app itself (source `system`, e.g. the start-up re-plan) and `lock_block` are not undo targets; restoring the snapshot also rolls back whatever was logged after the target.
+
+## GUI
+- Background threads never touch widgets: they post callables to a queue that the main loop drains every 40 ms via `after()`.
+- The visible view refreshes on `state_changed`; the other views refresh when they are shown (same result, less work). Lists are only rebuilt when their data actually changed.
+- **Start** on a block locks it first, so a re-plan triggered elsewhere cannot remove the block being timed. **Finish** ends the focus phase early and still asks Done / Partial / Didn't study.
+- Destructive UI actions (delete subject, reset to demo data, import) use the same Confirm/Cancel card in the coach panel as the chat; large payloads (import) are kept in memory and referenced by a token.
+- Only the newest coach message has active option/confirm buttons; older ones are disabled. Undo is shown on the latest message that executed a write.
+- Settings are applied with **Save settings**; entering the Settings view reloads the stored values. **Save key** and **Test connection** save the settings first.
+- The Week board shows the calendar week that contains today (starting on `week_start`), including past days of that week.
+- After a subject is added or edited in the UI, the coach asks for the most important missing piece (once per question), and the answer continues the intake interview.
+- No screenshots/icons are bundled; the window uses the default Tk icon.
