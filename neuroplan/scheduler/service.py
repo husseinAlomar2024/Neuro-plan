@@ -7,7 +7,7 @@ from typing import Optional
 
 from .. import config
 from ..db.repository import Repository
-from ..models import PlanResult, State
+from ..models import PlanResult, State, StudyBlock
 from .engine import generate_plan
 
 
@@ -47,12 +47,35 @@ def compute_plan(repo: Repository, today: date, days: Optional[int] = None) -> P
 
 
 def regenerate(repo: Repository, today: date, days: Optional[int] = None) -> PlanResult:
-    """SPEC 4.4: drop pending & unlocked blocks from today on, then store a fresh plan."""
+    """SPEC 4.4: replace pending & unlocked blocks from today on with a fresh plan.
+
+    Blocks that come out identical keep their row (and id), so a block the student is looking at
+    or timing does not disappear just because something unrelated changed."""
     with repo.transaction():
-        repo.delete_pending_unlocked_from(today)
+        old = [b for b in repo.list_blocks(today) if b.status == "pending" and not b.locked]
         result = generate_plan(build_state(repo, today), today, days or horizon_days(repo))
-        repo.insert_blocks(result.blocks)
+        pool: dict[tuple[object, ...], list[StudyBlock]] = {}
+        for b in old:
+            pool.setdefault(_identity(b), []).append(b)
+        fresh: list[StudyBlock] = []
+        for b in result.blocks:
+            same = pool.get(_identity(b))
+            if same:
+                kept = same.pop(0)
+                b.id, b.generated_at = kept.id, kept.generated_at
+                if (kept.start_time, kept.order_index) != (b.start_time, b.order_index):
+                    repo.update_block(kept.id, start_time=b.start_time, order_index=b.order_index)
+            else:
+                fresh.append(b)
+        for leftovers in pool.values():
+            for b in leftovers:
+                repo.delete_block(b.id)
+        repo.insert_blocks(fresh)
     return result
+
+
+def _identity(b: StudyBlock) -> tuple[object, ...]:
+    return (b.plan_date, b.subject_id, b.block_type, b.unit_number, b.duration_min, b.pomodoro, b.task_text)
 
 
 __all__ = ["build_state", "compute_plan", "regenerate", "horizon_days", "cap_boost_ids", "config"]

@@ -25,3 +25,16 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - Feasibility simulates up to 60 days ahead (`FEASIBILITY_MAX_DAYS`) so assessments beyond the 14-day horizon are checked without false alarms; `shortfall_min` = minutes of the assessed range still undone on the assessment date in that simulation, `available_min = needed_min − shortfall_min`.
 - Risk option 1 rounds the extra minutes/day up to 10; option 2 orders units by Σ(weight_pct / range size) over upcoming assessments covering them; option 3 reports the upper bound `(0.85 − current share) × T_d` summed over the days before the date, and is executed through an extra tool `set_cap_boost` (stored in setting `cap_boosts`).
 - "The regenerated week still covers backlog" (test 9) is checked as: every day of the week is planned, every subject that is behind gets CATCHUP blocks during the week, and every backlog unit is targeted inside the regenerated horizon.
+
+## Tools
+- Extra tools beyond the SPEC list: `set_cap_boost` (risk option 3), `dismiss_missing_info` (student has no answer to an onboarding question), and UI-only tools hidden from the LLM (`list_subjects`, `list_reviews`, `get_availability`, `get_settings`, `export_data`, `update_settings`, `reset_demo_data`, `import_data`) so the UI never touches SQL.
+- `subject` arguments accept a name, acronym (ML), configured alias or id; `upsert_subject` matches the exact name only (so similar names can be created).
+- `set_progress`/`upsert_subject` create missing unit rows when a subject has none yet (expected/done larger than the unit count); once units exist, exceeding them is an error.
+- `done_units = N` means exactly units 1..N are done; newly done units get a stage-0 review due tomorrow, un-done units lose theirs.
+- `log_study(minutes)` also stores a `done` block for today so the time counts against today's capacity, the KPIs and the streak; `log_study(units)` only marks units done.
+- Completing a REVIEW block rates its covered reviews (`rating` argument, default `good`). Completing a future block moves it to today.
+- `move_block` locks the moved block (otherwise the regeneration would delete it). `set_day_override` accepts `clear=true`.
+- `regenerate()` reconciles instead of delete+insert: identical pending blocks keep their row id, so ids held by the UI/timer/LLM stay valid across unrelated changes.
+- Date arguments accept `today` / `tomorrow` besides ISO dates; integer arguments accept numeric strings.
+- Undo of `update_settings` restores the previous setting values; `undo_last` itself is logged but not undoable.
+- Streak = consecutive days (ending today, or yesterday if nothing is logged yet today) with a done/partial block or a unit finished.

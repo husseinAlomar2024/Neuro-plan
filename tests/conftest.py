@@ -23,7 +23,7 @@ def today() -> date:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Iterator[Repository]:
-    r = Repository(tmp_path / "test.db")
+    r = Repository(tmp_path / "test.db", fast=True)
     yield r
     r.close()
 

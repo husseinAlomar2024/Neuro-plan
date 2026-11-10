@@ -32,7 +32,8 @@ def schema_sql() -> str:
 
 
 class Repository:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, fast: bool = False) -> None:
+        """``fast`` trades durability for speed (no fsync); meant for tests and throw-away DBs."""
         self.path = str(path)
         self._lock = threading.RLock()
         self._depth = 0
@@ -40,6 +41,9 @@ class Repository:
         self._conn.row_factory = sqlite3.Row
         try:
             self._conn.execute("PRAGMA foreign_keys = ON")
+            if fast:
+                self._conn.execute("PRAGMA synchronous = OFF")
+                self._conn.execute("PRAGMA journal_mode = MEMORY")
             check = self._conn.execute("PRAGMA quick_check").fetchone()
             if check is None or check[0] != "ok":
                 raise sqlite3.DatabaseError(f"integrity check failed: {check[0] if check else '?'}")
@@ -297,6 +301,9 @@ class Repository:
                      {"plan_date", "start_time", "status", "actual_min", "locked", "order_index",
                       "unit_number", "task_text"}, fields)
 
+    def delete_block(self, block_id: int) -> None:
+        self._x("DELETE FROM study_blocks WHERE id = ?", (block_id,))
+
     def delete_pending_unlocked_from(self, start: date) -> None:
         self._x("DELETE FROM study_blocks WHERE status = 'pending' AND locked = 0 AND plan_date >= ?",
                 (start.isoformat(),))
@@ -438,6 +445,8 @@ class Repository:
             self._x("DELETE FROM action_log")
             self.restore({t: data.get(t, []) for t in SNAPSHOT_TABLES})
             self._load("chat_messages", data.get("chat_messages", []))
+            for key in SNAPSHOT_SETTINGS:
+                self._x("DELETE FROM app_settings WHERE key = ?", (key,))
             for key, value in (data.get("app_settings") or {}).items():
                 if value is not None:
                     self.set_setting(key, str(value))
