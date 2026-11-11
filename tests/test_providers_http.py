@@ -96,7 +96,7 @@ def test_anthropic_without_tools_sends_no_tool_list() -> None:
     assert "tools" not in seen[0] and seen[0]["model"] == "claude-haiku-5-5"
 
 
-@pytest.mark.parametrize("status,kind", [(401, "auth"), (403, "auth"), (429, "rate_limit"), (500, "api"),
+@pytest.mark.parametrize("status,kind", [(401, "auth"), (403, "permission"), (429, "rate_limit"), (500, "api"),
                                          (404, "api"), (529, "api")])
 def test_anthropic_http_errors_map_to_provider_errors(status: int, kind: str) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:

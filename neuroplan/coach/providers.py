@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
@@ -23,21 +24,138 @@ ENV_KEYS = {"anthropic": "ANTHROPIC_API_KEY", "openai_compat": "OPENAI_API_KEY"}
 
 
 class ProviderError(Exception):
-    """A failed LLM call. ``kind`` is one of auth, rate_limit, network, refusal, api."""
+    """A failed LLM call.
 
-    def __init__(self, kind: str, message: str) -> None:
+    ``kind``: auth (the key is wrong), permission (the key is fine but the account/project may not use the
+    service), bad_url, bad_model, rate_limit (rate limit or quota), bad_request, network, refusal, api.
+    ``status`` is the HTTP status if there was one, ``detail`` the service's own explanation (never the key),
+    ``target`` the model or address the error is about."""
+
+    PERSISTENT = ("auth", "permission")     # will fail the same way until the settings change
+
+    def __init__(self, kind: str, message: str, status: Optional[int] = None, detail: str = "",
+                 target: str = "") -> None:
         super().__init__(message)
         self.kind = kind
         self.message = message
+        self.status = status
+        self.detail = detail
+        self.target = target
+
+    def reason(self) -> str:
+        """What went wrong, on one line: headline, HTTP status, and the service's own words."""
+        head = {
+            "auth": "The API key was rejected",
+            "permission": "The AI service accepted the key but denied access",
+            "bad_url": f"Nothing answers at the Base URL {self.target}".rstrip(),
+            "bad_model": f"The AI service does not know the model '{self.target}'" if self.target
+                         else "The AI service does not know this model",
+            "rate_limit": "The rate limit or quota of the AI service is used up",
+            "bad_request": "The AI service rejected the request",
+            "network": f"I can't reach the AI service at {self.target}" if self.target
+                       else "I can't reach the AI service",
+            "refusal": "The AI model declined that request",
+        }.get(self.kind, "The AI service returned an error")
+        detail = self.detail or ("" if self.status or self.kind != "api" else self.message)
+        if self.status:
+            head += f" (HTTP {self.status})"
+        return f"{head}: {detail}" if detail else head
+
+    def hint(self) -> str:
+        """What to do about it (Settings → Test connection)."""
+        return {
+            "auth": "Check the key in Settings.",
+            "permission": "The key itself works; the account or project behind it is not allowed to use this "
+                          "model (billing, plan or region).",
+            "bad_url": "Check the Base URL: it ends like …/v1, without /chat/completions.",
+            "bad_model": "Check the model names in Settings.",
+            "rate_limit": "Wait a little, or check the plan and billing of the account.",
+            "bad_request": "The service does not accept this kind of request; try another model.",
+            "network": "Check the Base URL and the internet connection.",
+        }.get(self.kind, "")
+
+    def explain(self) -> str:
+        """Reason plus hint, for the Settings view."""
+        reason = self.reason()
+        if reason[-1:] not in ".!?":
+            reason += "."
+        return f"{reason} {self.hint()}".strip()
 
     def notice(self) -> str:
         """One line for the chat."""
-        return {
-            "auth": "The API key was rejected — I'm answering in offline mode. Check it in Settings.",
-            "rate_limit": "The AI service is rate-limited right now — answering in offline mode.",
-            "network": "I can't reach the AI service — answering in offline mode.",
-            "refusal": "The AI model declined that request — answering in offline mode.",
-        }.get(self.kind, f"The AI service returned an error ({self.message}) — answering in offline mode.")
+        return f"{self.reason().rstrip('.')} — answering in offline mode."
+
+
+_BAD_KEY_RE = re.compile(r"api[ _-]?key[ _]?(is )?(not valid|invalid|expired|not found)|"
+                         r"(invalid|incorrect|expired|unknown|missing) (x-)?api[ _-]?key", re.IGNORECASE)
+
+
+def _redact(text: str, secret: str) -> str:
+    return text.replace(secret, "***") if secret else text
+
+
+def error_detail(body: str, secret: str = "") -> str:
+    """The human-readable message inside an error body ({"error": {"message": …}}, Gemini's list form,
+    Ollama's {"error": "…"}, or plain text), on one line, shortened, with the key removed."""
+    text = (body or "").strip()
+    try:
+        data: Any = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        error = data.get("error", data)
+        if isinstance(error, dict):
+            text = str(error.get("message") or error.get("detail") or error.get("status") or error.get("type")
+                       or "")
+        else:
+            text = str(error or "")
+    elif data is not None or text[:1] == "<":           # a bare JSON value or an HTML error page says nothing
+        text = ""
+    text = _redact(" ".join(text.split()), secret)
+    limit = config.ERROR_DETAIL_MAX_CHARS
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def status_error(status: int, body: str, secret: str = "", model: str = "", base_url: str = "") -> ProviderError:
+    """Map an HTTP error answer to a ProviderError that says what is really wrong."""
+    detail = error_detail(body, secret)
+    target = ""
+    if status == 401 or (status in (400, 403) and _BAD_KEY_RE.search(detail)):
+        kind = "auth"
+    elif status == 403:
+        kind = "permission"
+    elif status == 404 and "model" in detail.lower():
+        kind, target = "bad_model", model
+    elif status == 404 and base_url:
+        kind, target = "bad_url", base_url
+    elif status == 429:
+        kind = "rate_limit"
+    elif status in (400, 422):
+        kind = "bad_request"
+    else:
+        kind = "api"
+    return ProviderError(kind, f"HTTP {status}", status, detail, target)
+
+
+def connection_error(exc: BaseException, secret: str = "", host: str = "", timed_out: bool = False) -> ProviderError:
+    """A call that never got an HTTP answer: say whether it timed out or could not connect, and why."""
+    cause = exc.__cause__ or exc
+    if timed_out:
+        detail = f"no answer within {config.LLM_TIMEOUT_S} s"
+    else:
+        detail = _redact(" ".join(f"{type(cause).__name__}: {cause}".split()), secret)[:160].rstrip(": ")
+    return ProviderError("network", "connection failed or timed out", None, detail, host)
+
+
+def _body_of(exc: Any) -> str:
+    """The raw error body of an SDK status error."""
+    try:
+        return str(exc.response.text)
+    except Exception:
+        body = getattr(exc, "body", None)
+        return json.dumps(body) if isinstance(body, (dict, list)) else str(body or "")
 
 
 @dataclass
@@ -72,15 +190,16 @@ def get_api_key(provider: str) -> Optional[str]:
     if kr is not None:
         try:
             value = kr.get_password(config.KEYRING_SERVICE, provider)
-            if value:
-                return str(value)
+            if value and config.clean_api_key(value):
+                return config.clean_api_key(value)
         except Exception:
             log.warning("keyring read failed; falling back to the environment")
-    return os.environ.get(ENV_KEYS.get(provider, ""), "") or None
+    return config.clean_api_key(os.environ.get(ENV_KEYS.get(provider, ""), "")) or None
 
 
 def set_api_key(provider: str, key: str) -> bool:
     """Store (or, with an empty key, delete) the key in the OS keyring. Returns False if unavailable."""
+    key = config.clean_api_key(key)
     kr = _keyring()
     if kr is None:
         return False
@@ -104,6 +223,7 @@ class AnthropicProvider:
         """``http_client`` lets tests plug in a mock transport; production uses the SDK default."""
         import anthropic
         self._anthropic = anthropic
+        self._key = api_key
         self._client = anthropic.Anthropic(api_key=api_key, timeout=float(config.LLM_TIMEOUT_S),
                                            max_retries=config.LLM_MAX_RETRIES, http_client=http_client)
         self._no_effort: set[str] = set()      # models that reject output_config.effort
@@ -164,14 +284,11 @@ class AnthropicProvider:
                 self._no_effort.add(model)          # older model: retry once without the effort setting
                 kwargs.pop("output_config")
                 response = self._client.messages.create(**kwargs)
-        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
-            raise ProviderError("auth", "authentication failed") from exc
-        except anthropic.RateLimitError as exc:
-            raise ProviderError("rate_limit", "rate limited") from exc
         except anthropic.APIConnectionError as exc:      # includes APITimeoutError
-            raise ProviderError("network", "connection failed or timed out") from exc
+            raise connection_error(exc, self._key, "api.anthropic.com",
+                                   isinstance(exc, anthropic.APITimeoutError)) from exc
         except anthropic.APIStatusError as exc:
-            raise ProviderError("api", f"HTTP {exc.status_code}") from exc
+            raise status_error(exc.status_code, _body_of(exc), self._key, model) from exc
         except anthropic.APIError as exc:
             raise ProviderError("api", type(exc).__name__) from exc
         if response.stop_reason == "refusal":
@@ -190,9 +307,16 @@ class OpenAICompatProvider:
     def __init__(self, api_key: str, base_url: str = "", http_client: Any = None) -> None:
         import openai
         self._openai = openai
+        self._key = api_key
+        base_url = config.clean_base_url(base_url)
         self._client = openai.OpenAI(api_key=api_key, base_url=base_url or None,
                                      timeout=float(config.LLM_TIMEOUT_S), max_retries=config.LLM_MAX_RETRIES,
                                      http_client=http_client)
+
+    @property
+    def base_url(self) -> Any:
+        """The address the client really uses (after clean-up and the SDK's own defaults)."""
+        return self._client.base_url
 
     @staticmethod
     def convert(system: str, context: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -223,14 +347,11 @@ class OpenAICompatProvider:
             kwargs["tools"] = registry.openai_tools()
         try:
             response = self._client.chat.completions.create(**kwargs)
-        except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
-            raise ProviderError("auth", "authentication failed") from exc
-        except openai.RateLimitError as exc:
-            raise ProviderError("rate_limit", "rate limited") from exc
         except openai.APIConnectionError as exc:         # includes APITimeoutError
-            raise ProviderError("network", "connection failed or timed out") from exc
+            raise connection_error(exc, self._key, self.base_url.host,
+                                   isinstance(exc, openai.APITimeoutError)) from exc
         except openai.APIStatusError as exc:
-            raise ProviderError("api", f"HTTP {exc.status_code}") from exc
+            raise status_error(exc.status_code, _body_of(exc), self._key, model, str(self.base_url)) from exc
         except openai.APIError as exc:
             raise ProviderError("api", type(exc).__name__) from exc
         if not response.choices:
@@ -283,7 +404,7 @@ def build_provider(settings: dict[str, str]) -> tuple[Optional[Provider], str]:
             return None, "no_key"
         return AnthropicProvider(key), ""
     if kind == "openai_compat":
-        base_url = (settings.get("base_url") or "").strip()
+        base_url = config.clean_base_url(settings.get("base_url") or "")
         key = get_api_key("openai_compat")
         if not key:
             if not base_url:

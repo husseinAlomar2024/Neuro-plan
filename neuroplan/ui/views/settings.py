@@ -122,6 +122,10 @@ class SettingsView(BaseView):
             self.save_status.configure(text=result.summary, text_color=theme.DANGER)
             return False
         self.save_status.configure(text="Saved.", text_color=theme.SUCCESS)
+        stored = self.app.read("get_settings") or {}
+        for key in config.TEXT_SETTINGS:            # show pasted values the way they were cleaned up and stored
+            if key in stored:
+                self.v[key].set(stored[key])
         self.app.settings_changed()
         self.subtitle.configure(text=self.app.coach.status_text())
         return True
@@ -129,6 +133,8 @@ class SettingsView(BaseView):
     def _save_key(self) -> None:
         provider = self.v["provider"].get()
         key = self.key_var.get().strip()
+        if key != _KEY_PLACEHOLDER:
+            key = config.clean_api_key(key)
         if provider == "offline":
             self.key_status.configure(text="Choose a provider first.", text_color=theme.WARNING)
             return

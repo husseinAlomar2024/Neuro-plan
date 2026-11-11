@@ -43,11 +43,18 @@ Open **Settings**:
 2. Paste the API key and press **Save key**. The key is stored in the Windows Credential Manager through
    `keyring` (service `NeuroPlan`), never in the database or the log. Alternatively set the environment
    variable `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before starting the app.
-3. Press **Test connection**.
+3. Press **Test connection**. A failure shows the real reason with the HTTP status and the service's own
+   message: rejected key, key accepted but access denied (billing, plan, region), wrong Base URL, unknown
+   model, rate limit or quota, rejected request, or no connection.
+
+The Base URL is the part before `/chat/completions`, for example `https://api.openai.com/v1`,
+`http://localhost:11434/v1` (Ollama) or `https://generativelanguage.googleapis.com/v1beta/openai` (Gemini).
+Quotes, spaces and a pasted `/chat/completions` or `/models` ending are removed when you save. Settings take
+effect immediately; no restart is needed.
 
 Default models are `claude-sonnet-5-5` for chat and `claude-haiku-5-5` for proactive background messages;
-both are plain settings. If a call fails (network, key, rate limit, daily call cap) the coach says so in one
-line and answers the same message in offline mode.
+both are plain settings. If a call fails (network, key, rate limit, daily call cap) the coach says why in one
+line and answers the same message in offline mode; the same line is written to `neuroplan.log`.
 
 ## Using it
 
@@ -84,8 +91,8 @@ Produces `dist\NeuroPlan.exe` (PyInstaller, `--noconsole --onefile`, CustomTkint
 schema and the app icon bundled), then installs it for the current user:
 
 - the exe is copied to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe`;
-- a **NeuroPlan** shortcut is created on the Desktop (close the app before rebuilding, otherwise the
-  exe cannot be replaced).
+- a **NeuroPlan** shortcut is created on the Desktop. If the app is running during the build, the old
+  exe is set aside as `NeuroPlan.exe.old` and the new version starts the next time you open the app.
 
 The built exe keeps `neuroplan.db` and `neuroplan.log` in `%LOCALAPPDATA%\NeuroPlan`, wherever the exe
 itself is started from. Rebuilding only replaces `NeuroPlan.exe`; the data files are never touched. If an

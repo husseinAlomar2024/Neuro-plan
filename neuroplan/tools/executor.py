@@ -800,6 +800,10 @@ class ToolExecutor:
             if key not in config.EDITABLE_SETTINGS:
                 raise ToolError(f"update_settings: unknown setting '{key}'")
             value = str(raw).strip()
+            if key == "base_url":
+                value = config.clean_base_url(value)
+            elif key in config.TEXT_SETTINGS:
+                value = config.clean_pasted(value)
             allowed = config.EDITABLE_SETTINGS[key]
             if allowed is not None and value not in allowed:
                 raise ToolError(f"update_settings: '{key}' must be one of {', '.join(allowed)} (got {value!r})")

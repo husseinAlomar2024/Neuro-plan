@@ -96,6 +96,29 @@ def test_gui_smoke(app, seeded: Repository, tmp_path: Path) -> None:  # type: ig
     assert json.loads(target.read_text(encoding="utf-8"))["format"] == "neuroplan-export-1"
 
 
+def test_gui_settings_clean_pasted_values_and_show_the_real_test_result(  # type: ignore[no-untyped-def]
+        app, seeded: Repository, monkeypatch: pytest.MonkeyPatch) -> None:
+    from neuroplan.coach import coach as coach_module
+
+    from .test_provider_errors import FREE_TIER, GEMINI_URL, answering, gemini_error, provider_for
+    denied = answering(403, gemini_error(403, FREE_TIER, "PERMISSION_DENIED"))       # mock transport, no network
+    monkeypatch.setattr(coach_module, "build_provider", lambda settings: (provider_for(denied), ""))
+    app.show_view("Settings")
+    pump(app)
+    view = app.views["Settings"]
+    view.v["provider"].set("openai_compat")
+    view.v["base_url"].set(f' "{GEMINI_URL}models" ')
+    view.v["chat_model"].set("'gemini-flash-latest'")
+    view._test()                                        # saves first, then tests on a worker thread
+    assert seeded.get_setting("base_url") == GEMINI_URL.rstrip("/")
+    assert view.v["base_url"].get() == GEMINI_URL.rstrip("/"), "the field shows the cleaned value"
+    assert view.v["chat_model"].get() == seeded.get_setting("chat_model") == "gemini-flash-latest"
+    pump(app, until=lambda: view.key_status.cget("text") not in ("", "Testing…"))
+    shown = view.key_status.cget("text")
+    assert "denied access (HTTP 403)" in shown and "free tier is not available for this project" in shown
+    assert "API key was rejected" not in shown and view.test_button.cget("state") == "normal"
+
+
 def test_gui_timer_confirmation_flow(app, seeded: Repository) -> None:  # type: ignore[no-untyped-def]
     app.show_view("Today")
     pump(app)

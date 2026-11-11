@@ -97,6 +97,46 @@ EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
     "week_start": ("sun", "mon"),
     "plan_horizon_days": None,
 }
+TEXT_SETTINGS = ("base_url", "chat_model", "background_model")   # pasted values: quotes are stripped on save
+PASTE_QUOTES = "\"'`“”‘’«»<>"
+INVISIBLE_CHARS = "​‌‍⁠﻿"
+# endpoint paths people paste after the base URL; the SDK appends its own
+BASE_URL_ENDPOINT_SUFFIXES = ("/chat/completions", "/models")
+# JSON-Schema keywords left out of the tool list for OpenAI-compatible servers (a precaution: not every
+# server accepts strict-schema keywords); the executor validates arguments itself, so nothing is lost
+OPENAI_SCHEMA_DROP = ("format", "additionalProperties")
+ERROR_DETAIL_MAX_CHARS = 300  # how much of a provider's error message is shown and logged
+
+
+def clean_pasted(value: str) -> str:
+    """A pasted setting without surrounding whitespace, quotes and invisible characters."""
+    text = str(value).translate({ord(ch): None for ch in INVISIBLE_CHARS})
+    return text.strip().strip(PASTE_QUOTES).strip()
+
+
+def clean_api_key(value: str) -> str:
+    """A pasted API key: no quotes around it and no whitespace or line breaks anywhere."""
+    return clean_pasted("".join(str(value).split()))
+
+
+def clean_base_url(value: str) -> str:
+    """A pasted base URL: no quotes or whitespace, no endpoint path at the end, always with a scheme."""
+    url = clean_pasted("".join(str(value).split()))
+    while url:
+        stripped = url.rstrip("/")
+        for suffix in BASE_URL_ENDPOINT_SUFFIXES:
+            if stripped.lower().endswith(suffix):
+                stripped = stripped[:-len(suffix)]
+                break
+        if stripped == url:
+            break
+        url = stripped
+    if url and "://" not in url:
+        local = url.lower().startswith("localhost") or url[0].isdigit() or url[0] == "["
+        url = ("http://" if local else "https://") + url
+    return url
+
+
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 LLM_TIMEOUT_S = 30
 LLM_MAX_ROUNDS = 6

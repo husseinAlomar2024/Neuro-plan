@@ -148,21 +148,23 @@ def llm_specs() -> list[ToolSpec]:
     return [s for s in _SPECS if s.llm_visible]
 
 
-def export_schema(schema: Any) -> Any:
+def export_schema(schema: Any, drop: tuple[str, ...] = ("format",), _names: bool = False) -> Any:
     """The schema as sent to LLM providers: the same shape, minus what some servers reject
-    (custom ``format`` keywords, union types). Validation here still accepts the richer forms."""
+    (the keywords in ``drop``, union types). Validation here still accepts the richer forms."""
     if isinstance(schema, list):
-        return [export_schema(item) for item in schema]
+        return [export_schema(item, drop) for item in schema]
     if not isinstance(schema, dict):
         return schema
     out: dict[str, Any] = {}
     for key, value in schema.items():
-        if key == "format":
+        if _names:                                  # the keys of "properties" are argument names, not keywords
+            out[key] = export_schema(value, drop)
+        elif key in drop:
             continue
-        if key == "type" and isinstance(value, list):
+        elif key == "type" and isinstance(value, list):
             out[key] = "string" if "string" in value else value[0]
         else:
-            out[key] = export_schema(value)
+            out[key] = export_schema(value, drop, _names=(key == "properties"))
     return out
 
 
@@ -173,7 +175,8 @@ def anthropic_tools() -> list[dict[str, Any]]:
 
 def openai_tools() -> list[dict[str, Any]]:
     return [{"type": "function",
-             "function": {"name": s.name, "description": s.description, "parameters": export_schema(s.schema)}}
+             "function": {"name": s.name, "description": s.description,
+                          "parameters": export_schema(s.schema, config.OPENAI_SCHEMA_DROP)}}
             for s in llm_specs()]
 
 

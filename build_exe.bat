@@ -38,12 +38,23 @@ set "NP_DIR=%LOCALAPPDATA%\NeuroPlan"
 set "NP_EXE=%NP_DIR%\NeuroPlan.exe"
 if not exist "%NP_DIR%" mkdir "%NP_DIR%"
 if not exist "%NP_DIR%" goto :fail
-copy /y "dist\NeuroPlan.exe" "%NP_EXE%" >nul
+set "NP_RUNNING="
+rem an exe set aside by an earlier build (see below); a program file, not data
+if exist "%NP_EXE%.old" del /q "%NP_EXE%.old" >nul 2>&1
+copy /y "dist\NeuroPlan.exe" "%NP_EXE%" >nul 2>&1
 if errorlevel 1 (
-    echo Could not replace "%NP_EXE%". Close NeuroPlan and run build_exe.bat again.
-    goto :fail
+    rem NeuroPlan is running. Windows lets a running exe be renamed, so set it aside and copy again.
+    move /y "%NP_EXE%" "%NP_EXE%.old" >nul 2>&1
+    copy /y "dist\NeuroPlan.exe" "%NP_EXE%" >nul 2>&1
+    if errorlevel 1 (
+        if not exist "%NP_EXE%" move /y "%NP_EXE%.old" "%NP_EXE%" >nul 2>&1
+        echo Could not replace "%NP_EXE%". Close NeuroPlan and run build_exe.bat again.
+        goto :fail
+    )
+    set "NP_RUNNING=1"
 )
 echo Installed %NP_EXE%
+if defined NP_RUNNING echo NeuroPlan is running: close it and open it again to use the new version.
 
 rem ---- Desktop shortcut (the Desktop folder is asked from Windows, so a OneDrive desktop works too)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $desktop = [Environment]::GetFolderPath('Desktop'); $link = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'NeuroPlan.lnk')); $link.TargetPath = $env:NP_EXE; $link.WorkingDirectory = $env:NP_DIR; $link.IconLocation = $env:NP_EXE + ',0'; $link.Description = 'NeuroPlan study planner'; $link.Save(); Write-Host ('Shortcut   ' + $link.FullName)"

@@ -175,7 +175,8 @@ class Coach:
             provider.complete("You are a connection test.", "Reply with the single word OK.",
                               [{"role": "user", "content": "ping"}], model, tools=False)
         except ProviderError as exc:
-            return False, exc.notice().split(" — ")[0]
+            log.warning("connection test failed (%s): %s", exc.kind, exc.reason())
+            return False, exc.explain()
         return True, f"Connected: {model} answered."
 
     def test_connection_async(self, callback: Callable[[bool, str], None]) -> None:
@@ -269,8 +270,8 @@ class Coach:
                     f"cap:{self._today_iso()}",
                     "Today's AI call limit is reached — I'm answering in offline mode until tomorrow.")
             except ProviderError as exc:
-                log.warning("LLM call failed (%s): %s", exc.kind, exc.message)
-                if exc.kind == "auth":
+                log.warning("LLM call failed (%s): %s", exc.kind, exc.reason())
+                if exc.kind in ProviderError.PERSISTENT:    # every further call would fail the same way
                     self._auth_failed = True
                     notice = self._notice_once("auth", exc.notice())
                     self._notices_shown.add("no_key")        # one notice is enough
@@ -303,7 +304,7 @@ class Coach:
                 "You maintain a concise running summary of a coaching conversation.", "No extra context.",
                 [{"role": "user", "content": prompt}], self._setting("background_model"), tools=False)
         except ProviderError as exc:
-            log.warning("summary update failed: %s", exc.message)
+            log.warning("summary update failed: %s", exc.reason())
             return
         words = response.text.split()
         if not words:
@@ -438,7 +439,7 @@ class Coach:
                 [{"role": "user", "content": event_message(prompt_name, **facts)}],
                 self._setting("background_model"), tools=False)
         except ProviderError as exc:
-            log.warning("proactive LLM call failed (%s): %s", exc.kind, exc.message)
+            log.warning("proactive LLM call failed (%s): %s", exc.kind, exc.reason())
             return template
         return response.text or template
 
