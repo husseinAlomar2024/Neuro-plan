@@ -19,14 +19,16 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 
 ## Verification
 - `.venv\Scripts\python -m pytest -q` → 359 passed.
-- `build_exe.bat` (2026-11-11, current code) → `dist\NeuroPlan.exe` (about 29 MB), copied to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe`, shortcut `Desktop\NeuroPlan.lnk` created. The exe was started from a scratch folder with `LOCALAPPDATA` pointing at a scratch folder and an old `neuroplan.db` beside it: it stayed up, created `NeuroPlan\neuroplan.db` and `neuroplan.log` there, the old subjects were present, the old file was left in place, and the coach posted its start-up messages. The installed copy itself has not been started, so the real data folder holds only the exe until the first launch.
+- `build_exe.bat` (2026-11-11, after the provider fix) → `dist\NeuroPlan.exe` (about 29 MB) installed to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe` while the app was running: the running exe was set aside as `NeuroPlan.exe.old`, the database and log were untouched, the shortcut was rewritten. The new exe has not been started yet (the open app is still the old build). The earlier build was smoke-tested from a scratch folder with a redirected `LOCALAPPDATA` (data folder created, old database copied once).
+- Live diagnosis (2026-11-11, 6 requests, allowed for this once): with the installed app's settings and keyring key, Gemini's OpenAI-compatible endpoint answers every chat call, plain or with tools, with HTTP 403 `PERMISSION_DENIED` "The Gemini API free tier is not available for this project" (also for another model). The stored Base URL ended in `/models` (HTTP 404 before the clean-up). The fixed code reports exactly that reason.
 - The app was launched from source on a temp DB, every view shown, an offline chat message answered.
 
 ## Next
-- Nothing open. Optional ideas: app icon, drag-and-drop on the week board, per-unit titles in the Subjects view.
+- Nothing open. Optional ideas: drag-and-drop on the week board, per-unit titles in the Subjects view.
 
 ## Known issues
-- The LLM providers are verified against a mock HTTP transport and a scripted FakeProvider only; no live API call was made during the build (by design: no network, no keys).
+- No successful live chat round-trip has been seen yet: the only real endpoint tried (Gemini, see Verification) refuses the project with HTTP 403, so a tool call against a real model, and whether Gemini accepts the full tool list, are still unverified. Everything else about the providers is checked against a mock HTTP transport and a scripted FakeProvider.
+- GUI tests were slow on 2026-11-11 (suite 128 s instead of about 40 s) and one full run was stopped after 400 s without output; the rerun passed.
 - GUI tests need a display; they are skipped automatically without one.
 
 ## Environment
