@@ -143,6 +143,120 @@ def test_gui_confirmation_card_for_delete(app, seeded: Repository) -> None:  # t
     assert created is not None and len(seeded.list_units(created.id)) == 8
 
 
+def test_gui_archive_restore_and_delete_buttons(app, seeded: Repository) -> None:  # type: ignore[no-untyped-def]
+    from datetime import timedelta
+    app.show_view("Subjects")
+    pump(app)
+    view = app.views["Subjects"]
+    week = lambda: [b for b in seeded.list_blocks(TODAY, TODAY + timedelta(days=6))  # noqa: E731
+                    if b.status == "pending"]
+    ielts = seeded.get_subject_by_name("IELTS Prep")
+    assert ielts is not None and any(b.subject_id == ielts.id for b in week())
+    assert ("IELTS Prep", "archive") in view.row_buttons and ("IELTS Prep", "delete") in view.row_buttons
+    # Archive: active=0, the plan is rebuilt without it, the row disappears, history stays
+    units = len(seeded.list_units(ielts.id))
+    view.row_buttons[("IELTS Prep", "archive")].invoke()
+    pump(app, 0.1)
+    archived = seeded.get_subject_by_name("IELTS Prep")
+    assert archived is not None and not archived.active and len(seeded.list_units(ielts.id)) == units
+    assert week() and all(b.subject_id != ielts.id for b in week())
+    assert seeded.list_actions(1)[0].source == "ui", "the button goes through the tool executor"
+    assert [s["name"] for s in view.visible_subjects()] == ["Deep Learning", "Machine Learning",
+                                                           "Internet Programming"]
+    assert not any(name == "IELTS Prep" for name, _kind in view.row_buttons)
+    assert view.archived_switch.cget("text") == "Show archived (1)"
+    # Show archived -> Restore
+    view.archived_switch.toggle()
+    pump(app, 0.1)
+    assert view.show_archived.get() and ("IELTS Prep", "restore") in view.row_buttons
+    view.row_buttons[("IELTS Prep", "restore")].invoke()
+    pump(app, 0.1)
+    restored = seeded.get_subject_by_name("IELTS Prep")
+    assert restored is not None and restored.active
+    assert any(b.subject_id == ielts.id for b in week())
+    assert ("IELTS Prep", "archive") in view.row_buttons
+    # both steps can be undone
+    assert app.call("undo_last").ok and not seeded.get_subject_by_name("IELTS Prep").active
+    assert app.call("undo_last").ok and seeded.get_subject_by_name("IELTS Prep").active
+    pump(app, 0.1)
+    # Delete: confirmation card first, then the subject is gone; undo brings it back
+    view.row_buttons[("IELTS Prep", "delete")].invoke()
+    pump(app, 0.1)
+    card = seeded.list_messages()[-1]
+    assert card.actions["confirmations"][0]["tool"] == "delete_subject"
+    assert seeded.get_subject_by_name("IELTS Prep") is not None, "nothing is deleted before Confirm"
+    app.coach.select_option({"type": "confirm", **card.actions["confirmations"][0]}, "Confirm")
+    pump(app, 0.1)
+    assert seeded.get_subject_by_name("IELTS Prep") is None
+    assert all(b.subject_id != ielts.id for b in week())
+    app.coach.select_option({"type": "undo"}, "Undo")
+    pump(app, 0.1)
+    assert seeded.get_subject_by_name("IELTS Prep") is not None
+    # archiving the subject that is open in the form: it stays while archived ones are shown ...
+    view._select("Deep Learning")
+    pump(app)
+    view.row_buttons[("Deep Learning", "archive")].invoke()
+    pump(app, 0.1)
+    assert not seeded.get_subject_by_name("Deep Learning").active
+    assert view.selected == "Deep Learning" and ("Deep Learning", "restore") in view.row_buttons
+    view.archived_switch.toggle()                     # ... and the form is cleared once they are hidden
+    pump(app, 0.1)
+    assert not view.show_archived.get() and "Deep Learning" not in [s["name"] for s in view.visible_subjects()]
+    assert view.selected is None and view.delete_button.cget("state") == "disabled"
+    # every row fits the table: the buttons are not pushed out of view
+    table = view.table._parent_canvas
+    assert all(row.winfo_children()[-1].winfo_reqwidth() <= table.winfo_reqwidth() for row in
+               view.table.winfo_children())
+
+
+def test_gui_chat_bubbles_wrap_to_panel_width(app, seeded: Repository) -> None:  # type: ignore[no-untyped-def]
+    import customtkinter as ctk
+
+    from neuroplan.models import ChatMessage
+    app.deiconify()                                   # sizes are only real on a mapped window
+    pump(app, 0.3)
+    panel = app.panel
+    canvas = panel.messages._parent_canvas
+    scale = ctk.ScalingTracker.get_widget_scaling(panel)
+    long_word = "Pneumonoultramicroscopicsilicovolcanoconiosis" * 4
+    sentence = "This is a long coach answer that has to wrap inside the bubble instead of running off the panel. "
+    summary = "Machine Learning: 7 expected by now → 3 unit(s) behind, the week was re-planned around it " * 2
+    panel.add_message(ChatMessage(9001, "", "user", sentence * 3 + long_word))
+    panel.add_message(ChatMessage(9002, "", "coach", sentence * 4 + long_word, {
+        "actions": [{"tool": "set_day_override", "ok": True, "summary": summary, "action_id": 1, "write": True},
+                    {"tool": "set_progress", "ok": False, "summary": long_word, "action_id": None, "write": True}],
+        "confirmations": [{"tool": "delete_subject", "args": {}, "preview": sentence * 2 + long_word}]}))
+    panel.add_message(ChatMessage(9003, "", "system_event", sentence * 3))
+    pump(app, 0.3)
+
+    def assert_fits() -> None:
+        width = canvas.winfo_width()
+        assert abs(panel._area - int(width / scale)) <= 1, "the wrap width follows the message list"
+        for holder in panel.messages.winfo_children():
+            assert holder.winfo_reqwidth() <= width, "a message is wider than the panel (clipped text)"
+        for text, inset in panel._wrapped:
+            assert text.cget("wraplength") == panel._area - inset
+            assert text.winfo_reqwidth() <= text.cget("wraplength") * scale + 4, "long words must break too"
+
+    assert len(panel._wrapped) >= 6 and any(inset for _t, inset in panel._wrapped)
+    assert_fits()
+    before = panel._area
+    lines = max(text.winfo_reqheight() for text, _inset in panel._wrapped)
+    panel.configure(width=560)                        # a wider panel: every text re-wraps to the new width
+    pump(app, 0.3)
+    assert panel._area > before + 100
+    assert_fits()
+    assert max(text.winfo_reqheight() for text, _inset in panel._wrapped) < lines, "wider panel, fewer lines"
+    panel.configure(width=300)                        # and a narrower one
+    pump(app, 0.3)
+    assert panel._area < before
+    assert_fits()
+    panel.load_history()                              # re-rendered history uses the current width
+    pump(app, 0.2)
+    assert panel._wrapped
+    assert_fits()
+
+
 def test_gui_proactive_wiring(app, seeded: Repository) -> None:  # type: ignore[no-untyped-def]
     """Timer breaks, the end-of-day clock and the close button all reach the coach through events."""
     from datetime import datetime

@@ -13,8 +13,10 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 - P7: proactive wiring: start-up sequence (missed blocks, re-plan, onboarding or briefing, review nudge), plan-change debounce, block finished/skipped, risk options, end-of-day (clock + close), break tips, onboarding after UI edits.
 - P8: `README.md`, `DECISIONS.md`, `build_exe.bat` (PyInstaller onefile/noconsole), bare `pass` clean-up, plain exported tool schemas, undo skips housekeeping actions.
 
+- Post-P8 fixes (2026-11-11): archive/restore/delete buttons and "Show archived" in the Subjects view, "archive X" in the offline parser; multi-intent messages (clause splitting) in the offline parser; chat bubbles wrap to the panel width and re-wrap on resize.
+
 ## Verification
-- `.venv\Scripts\python -m pytest -q` → 270 passed.
+- `.venv\Scripts\python -m pytest -q` → 291 passed (after the post-P8 fixes; the exe below was built before them and has not been rebuilt).
 - `build_exe.bat` → `dist\NeuroPlan.exe` (about 29 MB), built from the final code. The exe was started from a scratch folder: it stayed up, created `neuroplan.db` with the seed data and plan, the coach posted the welcome, the daily briefing and the review nudge, and the log stayed empty.
 - The app was launched from source on a temp DB, every view shown, an offline chat message answered.
 

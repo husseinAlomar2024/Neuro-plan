@@ -543,6 +543,8 @@ class ToolExecutor:
         detail = f" ({', '.join(changed)})" if changed and verb == "Updated" else ""
         if verb == "Added" and total:
             detail = f" with {total} units"
+        if changed == ["active"] and existing is not None:      # the Archive / Restore buttons and "archive X"
+            verb, detail = ("Restored" if subject.active else "Archived"), ""
         return f"{verb} subject {subject.name}{detail}", {"id": sid, "name": subject.name}
 
     def _t_delete_subject(self, a: dict[str, Any]) -> tuple[str, Any]:

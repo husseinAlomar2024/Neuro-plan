@@ -45,6 +45,9 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - A generic word ("exam", "test", "امتحان") updates the subject's only upcoming midterm/final if there is exactly one, otherwise adds a `final`; a specific kind ("midterm", "quiz") updates an upcoming assessment of that kind or adds one.
 - "N behind in X" sets `expected_units_by_now = done + N` (capped at the unit count).
 - "I couldn't study today, rebalance" → `set_day_override(today, 0)` then `regenerate_plan`.
+- One message can hold several intents: it is cut at sentence punctuation and line breaks, then at commas, "and"/"also" and before "I"/"today"/"tonight"/"tomorrow"/"my" (never inside a subject name). Neighbouring pieces are grouped so that the least text stays unrecognised and, among those groupings, the most clauses carry an intent; each clause runs its first matching intent, repeated calls run once, and each clause is read against the state left by the ones before it.
+- Neighbouring weekly-availability clauses are merged back into one `set_weekly_availability` call; "today/tomorrow + a duration" is a day override only if the clause names no subject or has an availability word ("have", "only", "free"…), so "DL for 2 hours today" is not one.
+- "archive X" → `upsert_subject(active=false)` (summary "Archived/Restored subject X" when `active` is the only change); "delete/remove [subject] X" → `delete_subject`, confirmation card as before. There is no chat command for restoring: use Undo or the Subjects view.
 - Onboarding also asks for weekly availability when every weekday has 0 minutes (order: subjects → availability → units → assessment → expected). The offline interview keeps one pending question in memory and reads short answers ("12", "in 10 days", "none", "7 expected, 3 done").
 
 ## LLM coach
@@ -75,3 +78,5 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - The Week board shows the calendar week that contains today (starting on `week_start`), including past days of that week.
 - After a subject is added or edited in the UI, the coach asks for the most important missing piece (once per question), and the answer continues the intake interview.
 - No screenshots/icons are bundled; the window uses the default Tk icon.
+- Subjects view: every subject card has its own Archive (or Restore) and Delete buttons on a separate line (the card is too narrow to share a line with the text); archived subjects are hidden unless "Show archived" is on. The form keeps its Active switch and Delete button; a fourth form button did not fit.
+- Chat texts (bubbles, action badge lines, confirm cards, system lines) take their `wraplength` from the width of the message list (`<Configure>` on its canvas, divided by the widget scaling) minus a fixed inset per kind, and are re-wrapped when that width changes. Option buttons keep their one-line labels.

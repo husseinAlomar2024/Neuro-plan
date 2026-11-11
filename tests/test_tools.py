@@ -494,3 +494,44 @@ def test_exported_schemas_are_plain(ex: ToolExecutor) -> None:
     walk(registry.openai_tools())
     # the executor itself still accepts ids and names for subjects, and 'today' for dates
     assert ex.execute("get_plan", {"date_from": "today"}).ok
+
+
+# ---------------------------------------------------------------- archive / restore a subject
+def test_archive_hides_subject_from_plan_keeps_history_and_undoes(ex: ToolExecutor, seeded: Repository) -> None:
+    ml = seeded.get_subject_by_name("Machine Learning")
+    assert ml is not None and ml.active
+    units_before = [(u.number, u.status) for u in seeded.list_units(ml.id)]
+    reviews_before = len([r for r in seeded.list_reviews() if r.subject_id == ml.id])
+    before = seeded.snapshot()
+    assert any(b.subject_id == ml.id for b in seeded.list_blocks(TODAY, TODAY + timedelta(days=6)))
+
+    archived = ex.execute("upsert_subject", {"name": "Machine Learning", "active": False})
+    assert archived.ok and archived.summary == "Archived subject Machine Learning"
+    assert archived.plan_change, "archiving re-plans the week"
+    after = seeded.get_subject_by_name("Machine Learning")
+    assert after is not None and not after.active
+    pending = [b for b in seeded.list_blocks(TODAY, TODAY + timedelta(days=13)) if b.status == "pending"]
+    assert pending and all(b.subject_id != ml.id for b in pending), "no planned block for an archived subject"
+    assert [(u.number, u.status) for u in seeded.list_units(ml.id)] == units_before, "progress is kept"
+    assert len([r for r in seeded.list_reviews() if r.subject_id == ml.id]) == reviews_before
+    assert all(row["subject"] != "Machine Learning" for row in ex.execute("list_reviews").data["due"])
+
+    restored = ex.execute("upsert_subject", {"name": "Machine Learning", "active": True})
+    assert restored.ok and restored.summary == "Restored subject Machine Learning"
+    assert any(b.subject_id == ml.id for b in seeded.list_blocks(TODAY, TODAY + timedelta(days=6)))
+    assert ex.execute("undo_last").ok           # undo the restore -> archived again
+    again = seeded.get_subject_by_name("Machine Learning")
+    assert again is not None and not again.active
+    assert ex.execute("undo_last").ok           # undo the archive -> exactly the original state
+    assert seeded.snapshot() == before
+
+
+def test_delete_subject_needs_confirmation_then_can_be_undone(ex: ToolExecutor, seeded: Repository) -> None:
+    before = seeded.snapshot()
+    ask = ex.execute("delete_subject", {"subject": "IELTS Prep"})
+    assert ask.ok and ask.needs_confirmation and "Delete 'IELTS Prep'" in ask.preview
+    assert seeded.snapshot() == before, "nothing is deleted before the confirmation"
+    done = ex.execute("delete_subject", ask.data["args"])
+    assert done.ok and seeded.get_subject_by_name("IELTS Prep") is None
+    assert ex.execute("undo_last").ok
+    assert seeded.snapshot() == before

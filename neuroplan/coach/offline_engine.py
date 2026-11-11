@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 from dateutil import parser as date_parser
 
@@ -33,6 +33,14 @@ _TODAY_RE = re.compile(rf"{_B}(today|tonight|this evening|اليوم|الليل�
 _TOMORROW_RE = re.compile(rf"{_B}(tomorrow|tmrw|بكرة|بكره|غدا|غداً){_E}")
 _MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*"
 _GENERIC_EXAM = {"exam", "test", "امتحان", "اختبار"}
+_AVAILABILITY_CUE_RE = re.compile(rf"{_B}(have|got|only|free|available|left|can|capacity|limit(ed)?){_E}|عندي|فقط")
+# Clause boundaries. Hard: after sentence punctuation or at a line break. Soft: a comma, "and"/"also",
+# or the start of a new statement ("I ...", "today ...", "my ...").
+_SENTENCE_RE = re.compile(r"(?<=[.!?;؟؛])\s+|\s*\n+\s*")
+_SOFT_BOUNDARY_RE = re.compile(
+    rf",(?!\d)|،|{_B}(?:and|also){_E}|(?<=\S)\s+(?={_B}(?:i|today|tonight|tomorrow|my){_E})")
+_MAX_FRAGMENTS = 12
+_Span = tuple[int, int]
 _NONE_RE = re.compile(rf"^\s*(none|no|nope|nothing|not yet|skip|n/a|don'?t know|idk|لا|مافي|ما في|لا يوجد)\b")
 
 HELP = ("I'm running offline, so I understand simple commands. Try:\n"
@@ -42,7 +50,9 @@ HELP = ("I'm running offline, so I understand simple commands. Try:\n"
         "• \"I finished 2 units of Deep Learning\" / \"I studied ML for 40 min\"\n"
         "• \"my ML midterm is on 2026-11-24\"\n"
         "• \"I have 3 hours a day on weekdays and 6 hours on friday and saturday\"\n"
-        "• \"I couldn't study today, rebalance\" · \"why this order?\" · \"undo\"")
+        "• \"I couldn't study today, rebalance\" · \"why this order?\" · \"undo\"\n"
+        "• \"archive IELTS\" · \"delete subject IELTS\"\n"
+        "You can put several of these in one message.")
 
 
 def to_number(token: str) -> float:
@@ -184,13 +194,121 @@ class OfflineEngine:
                     find_subjects(norm, [s["name"] for s in subjects]))
 
     def parse(self, text: str) -> list[ToolCall]:
-        """Map an utterance to tool calls (empty list when nothing matches)."""
+        """Map an utterance to tool calls (empty list when nothing matches). A message may hold
+        several intents: every recognised clause contributes its calls, in text order."""
+        return list(self._calls_for(self.clauses(text), fresh=False))
+
+    def clauses(self, text: str) -> list[str]:
+        """The parts of ``text`` that each map to an intent, in text order."""
         ctx = self._context(text)
+        spans: list[_Span] = []
+        for sentence in self._split(ctx, _SENTENCE_RE, (0, len(ctx.text))):
+            spans.extend(self._best_grouping(ctx, self._split(ctx, _SOFT_BOUNDARY_RE, sentence)))
+        if not spans and self._parse_clause(ctx):
+            spans = [(0, len(ctx.text))]              # an intent that only shows across sentences
+        spans = self._join_availability(ctx, spans)
+        return [ctx.raw[start:end] for start, end in spans]
+
+    @staticmethod
+    def _split(ctx: _Ctx, boundary: "re.Pattern[str]", span: _Span) -> list[_Span]:
+        """Cut ``span`` at every boundary match that is not inside a subject name; trimmed, non-empty."""
+        out: list[_Span] = []
+        start = span[0]
+        cuts = [(m.start(), m.end()) for m in boundary.finditer(ctx.text, span[0], span[1])
+                if not any(s < m.end() and m.start() < e for s, e, _ in ctx.mentions)]
+        for cut_start, cut_end in cuts + [(span[1], span[1])]:
+            piece = ctx.text[start:cut_start]
+            if piece.strip():
+                lead = len(piece) - len(piece.lstrip())
+                out.append((start + lead, start + len(piece.rstrip())))
+            start = cut_end
+        return out
+
+    def _best_grouping(self, ctx: _Ctx, fragments: list[_Span]) -> list[_Span]:
+        """Group neighbouring fragments into clauses so that as little text as possible stays
+        unrecognised and, among those groupings, as many clauses as possible carry an intent.
+        ("today | I only have 90 minutes | I'm 3 lectures behind in ML" becomes two clauses; a list like
+        "subjects: A, B and C" stays whole because its pieces mean nothing on their own.)"""
+        if len(fragments) > _MAX_FRAGMENTS:
+            fragments = fragments[:_MAX_FRAGMENTS - 1] + [(fragments[_MAX_FRAGMENTS - 1][0], fragments[-1][1])]
+        known: dict[_Span, bool] = {}
+
+        def recognised(i: int, j: int) -> bool:
+            span = (fragments[i][0], fragments[j - 1][1])
+            if span not in known:
+                known[span] = bool(self._parse_clause(self._sub_context(ctx, span)))
+            return known[span]
+
+        def weak(i: int) -> int:
+            """1 when fragment i starts at a bare "I"/"today"/"my" boundary (no comma or "and" before it)."""
+            return int(i > 0 and not ctx.text[fragments[i - 1][1]:fragments[i][0]].strip())
+
+        # (unrecognised fragments, -clauses, cuts at weak boundaries, back pointer): on a tie a trailing
+        # "today"/"tomorrow" stays with the clause before it ("I couldn't study tomorrow, rebalance").
+        best: list[tuple[int, int, int, int]] = [(0, 0, 0, 0)]
+        for j in range(1, len(fragments) + 1):
+            options: list[tuple[int, int, int, int]] = []
+            for i in range(j):
+                unknown, negative_clauses, weak_cuts, _back = best[i]
+                if recognised(i, j):
+                    options.append((unknown, negative_clauses - 1, weak_cuts + weak(i), i))
+                else:
+                    options.append((unknown + j - i, negative_clauses, weak_cuts + weak(i), i))
+            best.append(min(options))
+        spans: list[_Span] = []
+        j = len(fragments)
+        while j > 0:
+            i = best[j][3]
+            if recognised(i, j):
+                spans.append((fragments[i][0], fragments[j - 1][1]))
+            j = i
+        return spans[::-1]
+
+    def _join_availability(self, ctx: _Ctx, spans: list[_Span]) -> list[_Span]:
+        """'3 hours on weekdays and 6 hours on friday' is one weekly schedule, not two."""
+        def weekly(span: _Span) -> bool:
+            calls = self._parse_clause(self._sub_context(ctx, span))
+            return len(calls) == 1 and calls[0].name == "set_weekly_availability"
+
+        out: list[_Span] = []
+        for span in spans:
+            if out and weekly(out[-1]) and weekly(span) and weekly((out[-1][0], span[1])):
+                out[-1] = (out[-1][0], span[1])
+            else:
+                out.append(span)
+        return out
+
+    @staticmethod
+    def _sub_context(ctx: _Ctx, span: _Span) -> _Ctx:
+        text = ctx.text[span[0]:span[1]]
+        return _Ctx(text, ctx.raw[span[0]:span[1]], ctx.today, ctx.subjects,
+                    find_subjects(text, [s["name"] for s in ctx.subjects]))
+
+    def _calls_for(self, clauses: list[str], fresh: bool = True) -> Iterator[ToolCall]:
+        """The calls of every clause, without repeats. With ``fresh`` each clause is read against the
+        state left by the calls before it (the caller executes them as they are yielded)."""
+        seen: list[ToolCall] = []
+        subjects: Optional[list[dict[str, Any]]] = None
+        for clause in clauses:
+            if fresh or subjects is None:
+                ctx = self._context(clause)
+                subjects = ctx.subjects
+            else:
+                norm = normalize_keep_length(clause)
+                ctx = _Ctx(norm, clause, self.executor.today(), subjects,
+                           find_subjects(norm, [s["name"] for s in subjects]))
+            for call in self._parse_clause(ctx):
+                if call not in seen:
+                    seen.append(call)
+                    yield call
+
+    def _parse_clause(self, ctx: _Ctx) -> list[ToolCall]:
+        """The first intent that matches one clause."""
         intents: list[Callable[[_Ctx], Optional[list[ToolCall]]]] = [
             self._undo, self._subject_list, self._behind, self._finished_units, self._studied_minutes,
-            self._delete_subject, self._total_units, self._assessment, self._could_not_study,
-            self._day_override, self._weekly_availability, self._what_now, self._why, self._risks,
-            self._too_hard, self._rebalance,
+            self._archive_subject, self._delete_subject, self._total_units, self._assessment,
+            self._could_not_study, self._day_override, self._weekly_availability, self._what_now, self._why,
+            self._risks, self._too_hard, self._rebalance,
         ]
         for intent in intents:
             calls = intent(ctx)
@@ -262,6 +380,11 @@ class OfflineEngine:
             return None
         return [ToolCall("log_study", {"subject": c.mentions[0][2], "minutes": minutes})]
 
+    def _archive_subject(self, c: _Ctx) -> Optional[list[ToolCall]]:
+        if re.search(rf"^\s*(?:please\s+)?archive{_E}", c.text) and c.mentions:
+            return [ToolCall("upsert_subject", {"name": c.mentions[0][2], "active": False})]
+        return None
+
     def _delete_subject(self, c: _Ctx) -> Optional[list[ToolCall]]:
         if re.search(rf"^\s*(?:please\s+)?(delete|remove)\b", c.text) and c.mentions:
             return [ToolCall("delete_subject", {"subject": c.mentions[0][2]})]
@@ -308,6 +431,8 @@ class OfflineEngine:
         durations = parse_minutes(c.text)
         if not durations:
             return None
+        if c.mentions and not _AVAILABILITY_CUE_RE.search(c.text):
+            return None                       # "DL for 2 hours today" is about a subject, not the day
         day = c.today + timedelta(days=1) if tomorrow else c.today
         minutes = min(config.MAX_DAY_MINUTES, durations[0][2])
         return [ToolCall("set_day_override", {"date": day.isoformat(), "minutes": minutes})]
@@ -448,12 +573,13 @@ class OfflineEngine:
 
     # ------------------------------------------------------------ responding
     def respond(self, text: str, source: str = "chat_offline") -> EngineReply:
-        calls = self.parse(text)
-        if not calls and self.pending is not None:
-            calls = self._answer_pending(text)
-        if not calls:
-            reply = EngineReply(self._unknown(text), engine="offline")
-            return self._with_next_question(reply, repeat=True)
+        clauses = self.clauses(text)
+        calls: Iterable[ToolCall] = self._calls_for(clauses)
+        if not clauses:
+            calls = self._answer_pending(text) if self.pending is not None else []
+            if not calls:
+                reply = EngineReply(self._unknown(text), engine="offline")
+                return self._with_next_question(reply, repeat=True)
         reply = self.run_calls(calls, source)
         return self._with_next_question(reply)
 
@@ -469,11 +595,11 @@ class OfflineEngine:
             reply.text += f"\n\n{question}"
         return reply
 
-    def run_calls(self, calls: list[ToolCall], source: str = "chat_offline") -> EngineReply:
+    def run_calls(self, calls: Iterable[ToolCall], source: str = "chat_offline") -> EngineReply:
         reply = EngineReply("", engine="offline")
         parts: list[str] = []
         errors: list[str] = []
-        moved = ""
+        moved: list[str] = []
         for call in calls:
             result = self.executor.execute(call.name, call.args, source)
             spec = TOOLS[call.name]
@@ -487,14 +613,15 @@ class OfflineEngine:
                 reply.actions.pop()
                 parts.append(result.preview)
                 continue
-            moved = result.plan_change or moved
+            if result.plan_change and result.plan_change not in moved:
+                moved.append(result.plan_change)
             if spec.write:
                 parts.append(result.summary + ".")
             else:
                 parts.append(self._describe_read(call, result.data, reply))
         text = " ".join(p for p in parts if p)
         if moved and any(a.write and a.ok for a in reply.actions):
-            text += f"\nWhat moved — {moved}."
+            text += f"\nWhat moved — {'; '.join(moved)}."
         if errors:
             text += ("\n" if text else "") + "I couldn't do that: " + " ".join(errors)
         reply.text = text.strip() or "Done."

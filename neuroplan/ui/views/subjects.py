@@ -24,7 +24,13 @@ class SubjectsView(BaseView):
         self.subjects: list[dict[str, Any]] = []
         self.selected: Optional[str] = None          # subject name, None = new subject
         self.assessment_id: Optional[int] = None
-        self.header("Click a subject to edit it")
+        self.row_buttons: dict[tuple[str, str], ctk.CTkButton] = {}     # (subject, "archive"|"restore"|"delete")
+        bar = self.header("Click a subject to edit it")
+        self.show_archived = ctk.BooleanVar(value=False)
+        self.archived_switch = ctk.CTkSwitch(bar, text="Show archived", variable=self.show_archived,
+                                             font=theme.font(12), text_color=theme.TEXT,
+                                             progress_color=theme.ACCENT, command=self._toggle_archived)
+        self.archived_switch.pack(side="right")
 
         columns = ctk.CTkFrame(self, fg_color="transparent")
         columns.pack(fill="both", expand=True, padx=theme.PAD - 2, pady=(0, theme.PAD))
@@ -97,21 +103,36 @@ class SubjectsView(BaseView):
     def refresh(self) -> None:
         data = self.app.read("list_subjects")
         self.subjects = data.get("subjects", [])
-        signature = json.dumps(self.subjects, sort_keys=True) + str(self.selected)
+        archived = sum(1 for s in self.subjects if not s["active"])
+        self.archived_switch.configure(text=f"Show archived ({archived})" if archived else "Show archived")
+        signature = json.dumps(self.subjects, sort_keys=True) + str(self.selected) + str(self.show_archived.get())
         if signature == self._signature:
             return
         self._signature = signature
         clear(self.table)
+        self.row_buttons = {}
+        visible = self.visible_subjects()
         if not self.subjects:
             theme.label(self.table, "No subjects yet. Add one on the right, or tell the coach "
                                     "\"I have 3 subjects: …\".", 13, color=theme.MUTED, wraplength=380,
                         justify="left").pack(anchor="w", padx=10, pady=20)
-        for s in self.subjects:
+        elif not visible:
+            theme.label(self.table, "Every subject is archived. Turn on \"Show archived\" to restore one.", 13,
+                        color=theme.MUTED, wraplength=380, justify="left").pack(anchor="w", padx=10, pady=20)
+        for s in visible:
             self._row(s)
-        if self.selected and not any(s["name"] == self.selected for s in self.subjects):
+        if self.selected and not any(s["name"] == self.selected for s in visible):
             self._new()
         elif self.selected:
             self._load(self.selected)
+
+    def visible_subjects(self) -> list[dict[str, Any]]:
+        """Active subjects, plus the archived ones while "Show archived" is on."""
+        return [s for s in self.subjects if s["active"] or self.show_archived.get()]
+
+    def _toggle_archived(self) -> None:
+        self._signature = ""
+        self.refresh()
 
     def _row(self, s: dict[str, Any]) -> None:
         selected = s["name"] == self.selected
@@ -119,7 +140,7 @@ class SubjectsView(BaseView):
         row.pack(fill="x", padx=4, pady=4)
         top = ctk.CTkFrame(row, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(10, 2))
-        Chip(top, s["name"] + ("" if s["active"] else " (inactive)"), s["color_hex"], 14).pack(side="left")
+        Chip(top, s["name"] + ("" if s["active"] else " (archived)"), s["color_hex"], 14).pack(side="left")
         theme.label(top, f"{s['category']} · difficulty {s['difficulty']} · mastery {s['mastery']}", 11,
                     color=theme.MUTED).pack(side="right")
         mid = ctk.CTkFrame(row, fg_color="transparent")
@@ -139,8 +160,22 @@ class SubjectsView(BaseView):
         if upcoming:
             a = upcoming[0]
             theme.label(row, f"Next: {a['title']} in {a['days_until']} day(s)", 11, color=theme.MUTED).pack(
-                anchor="w", padx=12, pady=(0, 8))
-        for widget in (row, top, mid, bar_row):
+                anchor="w", padx=12, pady=(0, 2))
+        foot = ctk.CTkFrame(row, fg_color="transparent")      # own line: the row is too narrow to share one
+        foot.pack(fill="x", padx=12, pady=(0, 8))
+        name = s["name"]
+        delete = theme.ghost_button(foot, "Delete", lambda: self.delete_subject(name), width=58, height=24,
+                                    text_color=theme.DANGER)
+        delete.pack(side="right", padx=(4, 0))
+        if s["active"]:
+            toggle = theme.ghost_button(foot, "Archive", lambda: self.set_archived(name, True), width=62, height=24)
+        else:
+            toggle = theme.ghost_button(foot, "Restore", lambda: self.set_archived(name, False), width=62,
+                                        height=24, text_color=theme.ACCENT)
+        toggle.pack(side="right")
+        self.row_buttons[(name, "delete")] = delete
+        self.row_buttons[(name, "archive" if s["active"] else "restore")] = toggle
+        for widget in (row, top, mid, bar_row, foot):
             widget.bind("<Button-1>", lambda _e, name=s["name"]: self._select(name))
         for child in list(top.winfo_children()) + list(mid.winfo_children()):
             child.bind("<Button-1>", lambda _e, name=s["name"]: self._select(name))
@@ -215,7 +250,15 @@ class SubjectsView(BaseView):
 
     def _delete(self) -> None:
         if self.selected:
-            self.app.call("delete_subject", {"subject": self.selected})
+            self.delete_subject(self.selected)
+
+    def delete_subject(self, name: str) -> None:
+        """Ask for the deletion; the Confirm/Cancel card appears in the coach panel first."""
+        self.app.call("delete_subject", {"subject": name})
+
+    def set_archived(self, name: str, archived: bool) -> None:
+        """Archive (active=0: out of the plan, history kept) or restore a subject; the plan is rebuilt."""
+        self.app.call("upsert_subject", {"name": name, "active": not archived})
 
     def _edit_assessment(self, a: dict[str, Any]) -> None:
         self.assessment_id = a["id"]

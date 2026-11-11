@@ -8,6 +8,7 @@ import pytest
 
 from neuroplan import config
 from neuroplan.coach.offline_engine import OfflineEngine, next_weekday, parse_date, parse_minutes
+from neuroplan.coach.types import ToolCall
 from neuroplan.db.repository import Repository
 from neuroplan.tools.executor import ToolExecutor
 from neuroplan.tools.matching import find_subjects, match_subject
@@ -305,3 +306,131 @@ def test_subject_matching() -> None:
     assert match_subject("astrology", NAMES) is None
     found = find_subjects("i like ml and deep learning but html is fine", NAMES)
     assert [name for _s, _e, name in found] == ["Machine Learning", "Deep Learning"]
+
+
+# ---------------------------------------------------------------- archive / delete a subject in chat
+@pytest.mark.parametrize("text", ["archive IELTS Prep", "please archive ielts prep", "Archive the IELTS prep subject"])
+def test_archive_subject_parses(engine: OfflineEngine, text: str) -> None:
+    assert calls(engine, text) == [("upsert_subject", {"name": "IELTS Prep", "active": False})]
+
+
+@pytest.mark.parametrize("text,name", [
+    ("delete subject IELTS Prep", "IELTS Prep"), ("remove subject ielts prep", "IELTS Prep"),
+    ("remove IELTS prep", "IELTS Prep"), ("please delete the subject Internet Programming", "Internet Programming")])
+def test_delete_subject_parses(engine: OfflineEngine, text: str, name: str) -> None:
+    assert calls(engine, text) == [("delete_subject", {"subject": name})]
+
+
+def test_archive_in_chat_executes_and_undoes(engine: OfflineEngine, seeded: Repository) -> None:
+    reply = engine.respond("archive ML")
+    assert "Archived subject Machine Learning" in reply.text and not reply.confirmations
+    ml = seeded.get_subject_by_name("Machine Learning")
+    assert ml is not None and not ml.active
+    assert all(b.subject_id != ml.id for b in seeded.list_blocks(TODAY, TODAY + timedelta(days=6))
+               if b.status == "pending")
+    engine.respond("undo")
+    back = seeded.get_subject_by_name("Machine Learning")
+    assert back is not None and back.active
+
+
+@pytest.mark.parametrize("text", ["delete subject IELTS Prep", "remove subject IELTS Prep"])
+def test_delete_in_chat_still_requires_confirmation(engine: OfflineEngine, seeded: Repository, text: str) -> None:
+    reply = engine.respond(text)
+    assert [c["tool"] for c in reply.confirmations] == ["delete_subject"]
+    assert reply.confirmations[0]["args"] == {"subject": "IELTS Prep", "confirmed": True}
+    assert not reply.actions, "nothing runs before the student confirms"
+    assert seeded.get_subject_by_name("IELTS Prep") is not None
+    confirmed = engine.run_calls([ToolCall("delete_subject", reply.confirmations[0]["args"])])
+    assert "Deleted subject IELTS Prep" in confirmed.text
+    assert seeded.get_subject_by_name("IELTS Prep") is None
+
+
+# ---------------------------------------------------------------- several intents in one message
+def test_multi_intent_day_override_and_backlog(engine: OfflineEngine, seeded: Repository) -> None:
+    text = "today I only have 90 minutes I'm 3 lectures behind in ML"
+    assert engine.clauses(text) == ["today I only have 90 minutes", "I'm 3 lectures behind in ML"]
+    ml = next(s for s in engine.executor.execute("list_subjects").data["subjects"] if s["name"] == "Machine Learning")
+    assert calls(engine, text) == [
+        ("set_day_override", {"date": ISO, "minutes": 90}),
+        ("set_progress", {"subject": "Machine Learning", "expected_units_by_now": ml["done_units"] + 3}),
+    ]
+    reply = engine.respond(text)
+    badge = reply.actions_payload()["actions"]
+    assert [a["tool"] for a in badge] == ["set_day_override", "set_progress"], "every action shows in the badge"
+    assert all(a["ok"] and a["action_id"] for a in badge)
+    assert "Set today to 90 min" in reply.text and "3 unit(s) behind" in reply.text
+    assert seeded.get_overrides(TODAY)[TODAY].minutes == 90
+    after = seeded.get_subject_by_name("Machine Learning")
+    assert after is not None and after.expected_units_by_now == ml["done_units"] + 3
+
+
+def test_multi_intent_and_also_comma(engine: OfflineEngine, seeded: Repository) -> None:
+    tomorrow = TODAY + timedelta(days=1)
+    text = ("I finished 2 units of Deep Learning and my ML midterm is on 2026-11-24, "
+            "also tomorrow I only have 2 hours")
+    result = calls(engine, text)
+    assert [name for name, _ in result] == ["log_study", "update_assessment", "set_day_override"]
+    assert result[0][1] == {"subject": "Deep Learning", "units": 2}
+    assert result[1][1]["date"] == "2026-11-24"
+    assert result[2][1] == {"date": tomorrow.isoformat(), "minutes": 120}
+    reply = engine.respond(text)
+    assert [a["tool"] for a in reply.actions_payload()["actions"]] == [
+        "log_study", "update_assessment", "set_day_override"]
+    assert seeded.get_overrides(TODAY)[tomorrow].minutes == 120
+
+
+def test_multi_intent_sentences_and_line_breaks(engine: OfflineEngine, seeded: Repository) -> None:
+    text = "I studied ML for 40 min.\nI'm 2 lectures behind in deep learning and why this order?"
+    result = calls(engine, text)
+    assert [name for name, _ in result] == ["log_study", "set_progress", "explain_priority"]
+    assert result[0][1] == {"subject": "Machine Learning", "minutes": 40}
+    assert result[1][1]["subject"] == "Deep Learning"
+    reply = engine.respond(text)
+    shown = reply.actions_payload()["actions"]
+    assert [a["tool"] for a in shown] == ["log_study", "set_progress"], "read-only calls are not badge lines"
+    assert "comes first" in reply.text, "the read intent is answered in the same reply"
+
+
+def test_multi_intent_archive_and_delete(engine: OfflineEngine, seeded: Repository) -> None:
+    reply = engine.respond("archive IELTS and delete subject Internet Programming")
+    assert [a.tool for a in reply.actions] == ["upsert_subject"]
+    assert [c["tool"] for c in reply.confirmations] == ["delete_subject"]
+    ielts = seeded.get_subject_by_name("IELTS Prep")
+    assert ielts is not None and not ielts.active
+    assert seeded.get_subject_by_name("Internet Programming") is not None
+
+
+def test_later_clause_sees_the_state_left_by_earlier_ones(engine: OfflineEngine, seeded: Repository) -> None:
+    ml = seeded.get_subject_by_name("Machine Learning")
+    assert ml is not None
+    done = sum(1 for u in seeded.list_units(ml.id) if u.status == "done")
+    engine.respond("I finished 2 units of ML and I'm 1 behind in ML")
+    after = seeded.get_subject_by_name("Machine Learning")
+    assert after is not None and after.expected_units_by_now == done + 2 + 1
+
+
+def test_clause_splitting_keeps_single_intents_whole(engine: OfflineEngine) -> None:
+    # lists and schedules contain "and"/commas but are one intent
+    weekly = calls(engine, "I have 3 hours a day on weekdays and 6 hours on friday and saturday")
+    assert [name for name, _ in weekly] == ["set_weekly_availability"]
+    assert calls(engine, "add subjects Databases, Compilers and Networks") == [
+        ("upsert_subject", {"name": n}) for n in ("Databases", "Compilers", "Networks")]
+    # a fragment without its verb must not turn into a different intent
+    assert calls(engine, "I studied ML for 40 min and DL for 2 hours today") == [
+        ("log_study", {"subject": "Machine Learning", "minutes": 40})]
+    # a trailing day word stays with its clause; the repeated re-plan is not run twice
+    tomorrow = (TODAY + timedelta(days=1)).isoformat()
+    assert calls(engine, "I couldn't study tomorrow, rebalance") == [
+        ("set_day_override", {"date": tomorrow, "minutes": 0}), ("regenerate_plan", {})]
+    assert calls(engine, "what should I study today?") == [("get_plan", {"date_from": ISO, "date_to": ISO})]
+    assert calls(engine, "hello there") == []
+
+
+def test_clause_boundary_inside_a_subject_name_is_ignored(repo: Repository) -> None:
+    ex = ToolExecutor(repo, today_fn=lambda: TODAY)
+    assert ex.execute("upsert_subject", {"name": "Signals and Systems", "total_units": 10, "done_units": 2}).ok
+    engine = OfflineEngine(ex)
+    assert calls(engine, "I'm 3 lectures behind in Signals and Systems and today I only have 90 minutes") == [
+        ("set_progress", {"subject": "Signals and Systems", "expected_units_by_now": 5}),
+        ("set_day_override", {"date": ISO, "minutes": 90}),
+    ]
