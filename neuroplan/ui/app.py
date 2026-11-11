@@ -44,6 +44,9 @@ class NeuroPlanApp(ctk.CTk):
         self.geometry("1280x800")
         self.minsize(1024, 700)
         self.configure(fg_color=theme.BG)
+        if config.icon_path().is_file():           # otherwise CustomTkinter's default icon stays
+            with contextlib.suppress(Exception):   # an unreadable icon must not stop the app
+                self.iconbitmap(str(config.icon_path()))
 
         self.today = today_fn
         self._day = today_fn()

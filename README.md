@@ -80,8 +80,21 @@ The GUI smoke tests are skipped automatically when no display is available.
 build_exe.bat
 ```
 
-Produces `dist\NeuroPlan.exe` (PyInstaller, `--noconsole --onefile`, CustomTkinter data files and the SQL
-schema bundled). The exe keeps `neuroplan.db` and `neuroplan.log` next to itself.
+Produces `dist\NeuroPlan.exe` (PyInstaller, `--noconsole --onefile`, CustomTkinter data files, the SQL
+schema and the app icon bundled), then installs it for the current user:
+
+- the exe is copied to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe`;
+- a **NeuroPlan** shortcut is created on the Desktop (close the app before rebuilding, otherwise the
+  exe cannot be replaced).
+
+The built exe keeps `neuroplan.db` and `neuroplan.log` in `%LOCALAPPDATA%\NeuroPlan`, wherever the exe
+itself is started from. Rebuilding only replaces `NeuroPlan.exe`; the data files are never touched. If an
+older build left a `neuroplan.db` next to the exe, it is copied (not moved) to the new folder on the first
+run, unless a database already exists there. A run from source (`python main.py`) keeps using the project
+folder, so the two do not share data.
+
+The icon is `assets\neuroplan.ico`, drawn by `assets\make_icon.py` (standard library only); re-run that
+script to change the design.
 
 ## How it is put together
 

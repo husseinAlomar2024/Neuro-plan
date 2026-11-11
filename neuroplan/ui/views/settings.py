@@ -76,7 +76,7 @@ class SettingsView(BaseView):
         data = theme.card(body)
         data.pack(fill="x", padx=4, pady=(8, 4))
         theme.label(data, "Data", 14, "bold").pack(anchor="w", padx=12, pady=(10, 2))
-        theme.label(data, "Everything lives in neuroplan.db next to the app. Reset and Import ask for "
+        theme.label(data, f"Everything lives in {config.default_db_path()}. Reset and Import ask for "
                           "confirmation in the coach panel.", 12, color=theme.MUTED, wraplength=640,
                     justify="left").pack(anchor="w", padx=12)
         buttons = ctk.CTkFrame(data, fg_color="transparent")

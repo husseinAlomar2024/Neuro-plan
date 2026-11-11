@@ -9,6 +9,10 @@ Choices made where SPEC.md was silent or ambiguous. One line each.
 - Seed review stage for a unit done N days ago = first stage whose cumulative due offset (1, 4, 11, 27, 62 days) is ≥ N.
 - "Exam" maps to assessment kind `final` (IELTS exam in the seed, "exam" in chat).
 
+- Data location: the built exe stores `neuroplan.db` and `neuroplan.log` in `%LOCALAPPDATA%\NeuroPlan` (`~\AppData\Local\NeuroPlan` if the variable is missing); a run from source keeps the project folder (this replaces "next to the exe" in SPEC §2). A `neuroplan.db` next to the exe is copied there once, only while no database exists in the new folder; the old file stays.
+- `build_exe.bat` installs by copying only `NeuroPlan.exe` into `%LOCALAPPDATA%\NeuroPlan` (program and data share the folder) and writes `NeuroPlan.lnk` to the Desktop folder reported by Windows. It never deletes anything, and it does not copy the project's source-run database into the installed app.
+- The icon is generated without Pillow (`assets/make_icon.py`, sizes 16–64 as 32-bit bitmaps, 256 as PNG) and committed; the window uses it through `iconbitmap`, the exe through PyInstaller `--icon`.
+
 ## Scheduler
 - The daily subject cap is measured in focus minutes (block durations, reviews of that subject included) against `share × T_d`; a cap never forbids a single block (`max(share × T_d, quantum)`), so very short days stay usable.
 - The 20% review cap counts review focus minutes (15 per block); each review block still costs 15 + 5 break of day time.

@@ -1,13 +1,18 @@
 """All constants for NeuroPlan. SPEC.md section 4 numbers live here and nowhere else."""
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from pathlib import Path
+from typing import Optional
 
 APP_NAME = "NeuroPlan"
 KEYRING_SERVICE = "NeuroPlan"
+DATA_DIR_NAME = "NeuroPlan"          # folder under %LOCALAPPDATA% used by the built exe
 DB_FILENAME = "neuroplan.db"
 LOG_FILENAME = "neuroplan.log"
+ICON_FILENAME = "neuroplan.ico"
 LOG_MAX_BYTES = 1_000_000
 LOG_BACKUPS = 3
 SCHEMA_VERSION = 1
@@ -175,11 +180,54 @@ BREAK_TIPS = [
 ]
 
 
-def app_dir() -> Path:
-    """Directory that holds neuroplan.db: next to the exe when frozen, else the project dir."""
-    if getattr(sys, "frozen", False):
+def is_frozen() -> bool:
+    """True when running as the built exe (PyInstaller)."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def install_dir() -> Path:
+    """Where the program itself lives: the exe's folder when frozen, else the project dir."""
+    if is_frozen():
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
+
+
+def resolve_data_dir(frozen: bool, program_dir: Path, local_appdata: Optional[str], home: Path) -> Path:
+    """Folder for neuroplan.db and neuroplan.log. The built exe uses %LOCALAPPDATA%\\NeuroPlan
+    (``home``\\AppData\\Local\\NeuroPlan when the variable is missing); a run from source uses the project."""
+    if not frozen:
+        return program_dir
+    base = Path(local_appdata) if local_appdata and local_appdata.strip() else home / "AppData" / "Local"
+    return base / DATA_DIR_NAME
+
+
+def app_dir() -> Path:
+    """Directory that holds neuroplan.db and neuroplan.log; created if it does not exist yet."""
+    path = resolve_data_dir(is_frozen(), install_dir(), os.environ.get("LOCALAPPDATA"), Path.home())
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def migrate_legacy_db(program_dir: Path, data_dir: Path) -> Optional[Path]:
+    """Older builds kept neuroplan.db next to the exe. On the first run with the new location (no database
+    there yet) copy that file over; the old one is left where it is. Returns the new path if a copy was made."""
+    old, new = program_dir / DB_FILENAME, data_dir / DB_FILENAME
+    if new.exists() or not old.is_file() or old.resolve() == new.resolve():
+        return None
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for suffix in ("-wal", "-shm"):                      # SQLite side files, if the old app left any
+        side = old.with_name(old.name + suffix)
+        if side.is_file():
+            shutil.copy2(side, new.with_name(new.name + suffix))
+    partial = new.with_name(new.name + ".copying")       # never leave a half-written neuroplan.db behind
+    shutil.copy2(old, partial)
+    os.replace(partial, new)
+    return new
+
+
+def icon_path() -> Path:
+    """The window icon (bundled into the exe; ``assets`` in the project when running from source)."""
+    return resource_dir().parent / "assets" / ICON_FILENAME
 
 
 def resource_dir() -> Path:

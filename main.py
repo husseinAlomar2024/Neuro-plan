@@ -12,7 +12,7 @@ from neuroplan import config
 
 
 def setup_logging() -> None:
-    """Rotating log file next to the app (1 MB x 3). API keys are never passed to the logger."""
+    """Rotating log file in the data folder (1 MB x 3). API keys are never passed to the logger."""
     handler = RotatingFileHandler(config.app_dir() / config.LOG_FILENAME, maxBytes=config.LOG_MAX_BYTES,
                                   backupCount=config.LOG_BACKUPS, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -46,6 +46,13 @@ def main() -> int:
     from neuroplan.seed import seed_if_first_launch
     from neuroplan.ui.app import NeuroPlanApp
 
+    if config.is_frozen():
+        try:
+            moved = config.migrate_legacy_db(config.install_dir(), config.app_dir())
+            if moved is not None:
+                log.info("copied the database of an older build to %s", moved)
+        except OSError:
+            log.exception("could not copy the old database next to the exe")
     try:
         repo = open_database(config.default_db_path(), ask_recreate)
     except sqlite3.DatabaseError:

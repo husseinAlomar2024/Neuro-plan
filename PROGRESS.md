@@ -14,10 +14,11 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 - P8: `README.md`, `DECISIONS.md`, `build_exe.bat` (PyInstaller onefile/noconsole), bare `pass` clean-up, plain exported tool schemas, undo skips housekeeping actions.
 
 - Post-P8 fixes (2026-11-11): archive/restore/delete buttons and "Show archived" in the Subjects view, "archive X" in the offline parser; multi-intent messages (clause splitting) in the offline parser; chat bubbles wrap to the panel width and re-wrap on resize.
+- Install (2026-11-11): exe data in `%LOCALAPPDATA%\NeuroPlan` with one-time copy of an old database next to the exe, app icon (`assets\neuroplan.ico`), `build_exe.bat` installs the exe and creates the Desktop shortcut; `tests/test_paths.py`.
 
 ## Verification
-- `.venv\Scripts\python -m pytest -q` → 291 passed (after the post-P8 fixes; the exe below was built before them and has not been rebuilt).
-- `build_exe.bat` → `dist\NeuroPlan.exe` (about 29 MB), built from the final code. The exe was started from a scratch folder: it stayed up, created `neuroplan.db` with the seed data and plan, the coach posted the welcome, the daily briefing and the review nudge, and the log stayed empty.
+- `.venv\Scripts\python -m pytest -q` → 304 passed.
+- `build_exe.bat` (2026-11-11, current code) → `dist\NeuroPlan.exe` (about 29 MB), copied to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe`, shortcut `Desktop\NeuroPlan.lnk` created. The exe was started from a scratch folder with `LOCALAPPDATA` pointing at a scratch folder and an old `neuroplan.db` beside it: it stayed up, created `NeuroPlan\neuroplan.db` and `neuroplan.log` there, the old subjects were present, the old file was left in place, and the coach posted its start-up messages. The installed copy itself has not been started, so the real data folder holds only the exe until the first launch.
 - The app was launched from source on a temp DB, every view shown, an offline chat message answered.
 
 ## Next
