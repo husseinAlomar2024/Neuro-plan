@@ -491,7 +491,30 @@ class ToolExecutor:
 
     def _t_get_settings(self, a: dict[str, Any]) -> tuple[str, Any]:
         stored = self.repo.all_settings()
-        return "settings", {k: stored.get(k, config.DEFAULT_SETTINGS.get(k, "")) for k in config.EDITABLE_SETTINGS}
+        values = {k: stored.get(k, config.DEFAULT_SETTINGS.get(k, "")) for k in config.EDITABLE_SETTINGS}
+        values["theme"] = config.normalize_theme(values["theme"])
+        for key, default in config.PANE_SETTINGS.items():
+            values[key] = stored.get(key, str(default))
+        return "settings", values
+
+    def _t_set_ui_prefs(self, a: dict[str, Any]) -> tuple[str, Any]:
+        """Theme, text size and divider positions; validated, then stored as plain settings."""
+        clean: dict[str, str] = {}
+        for key, raw in a["prefs"].items():
+            if key not in config.UI_PREFS:
+                raise ToolError(f"set_ui_prefs: unknown preference '{key}'")
+            value = str(raw).strip()
+            if key == "theme":
+                value = config.LEGACY_THEMES.get(value, value)
+            allowed = config.UI_PREFS[key]
+            if allowed is not None and value not in allowed:
+                raise ToolError(f"set_ui_prefs: '{key}' must be one of {', '.join(allowed)} (got {value!r})")
+            if allowed is None and not (value.isdigit() and 0 < int(value) <= config.PANE_MAX_WIDTH):
+                raise ToolError(f"set_ui_prefs: '{key}' must be a width in px (got {value!r})")
+            clean[key] = value
+        for key, value in clean.items():
+            self.repo.set_setting(key, value)
+        return "Preferences saved", clean
 
     def _t_export_data(self, a: dict[str, Any]) -> tuple[str, Any]:
         return "Exported all data", self.repo.export_all()
@@ -804,6 +827,8 @@ class ToolExecutor:
                 value = config.clean_base_url(value)
             elif key in config.TEXT_SETTINGS:
                 value = config.clean_pasted(value)
+            elif key == "theme":
+                value = config.LEGACY_THEMES.get(value, value)
             allowed = config.EDITABLE_SETTINGS[key]
             if allowed is not None and value not in allowed:
                 raise ToolError(f"update_settings: '{key}' must be one of {', '.join(allowed)} (got {value!r})")

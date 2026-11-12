@@ -40,6 +40,8 @@ def ask_recreate(path: Path) -> bool:
 
 
 def main() -> int:
+    from neuroplan.ui.dpi import enable_dpi_awareness
+    enable_dpi_awareness()          # before any Tk window, also in the exe (see neuroplan/ui/dpi.py)
     setup_logging()
     log = logging.getLogger("neuroplan")
     from neuroplan.db.repository import open_database

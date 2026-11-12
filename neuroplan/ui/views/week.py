@@ -34,13 +34,14 @@ class WeekView(BaseView):
 
         self.banner_holder = ctk.CTkFrame(self, fg_color="transparent", height=1)
         self.banner_holder.pack(fill="x", padx=theme.PAD + 2)
-        self.banner = ctk.CTkFrame(self.banner_holder, fg_color=("#FBE9E7", "#3A2224"), corner_radius=10)
+        self.banner = ctk.CTkFrame(self.banner_holder, fg_color=theme.BANNER_BG, corner_radius=10)
         self.banner_text = theme.label(self.banner, "", 12, "bold", theme.DANGER, wraplength=560, justify="left")
         self.banner_text.pack(side="left", padx=12, pady=8)
+        theme.autowrap(self.banner_text, self.banner_holder, 150, minimum=160)
         theme.ghost_button(self.banner, "See options", lambda: app.ask_coach("Am I on track?"), width=100
                            ).pack(side="right", padx=10)
 
-        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body = theme.scrollable(self)
         body.pack(fill="both", expand=True, padx=theme.PAD - 4, pady=(0, theme.PAD))
         self.body = body
 
@@ -164,7 +165,7 @@ class WeekView(BaseView):
                                 border_color=theme.ACCENT if is_today else theme.BORDER)
             column.grid(row=0, column=col, sticky="nsew", padx=3, pady=2)
             theme.label(column, f"{day['weekday'][:3]} {d.day}", 12, "bold",
-                        theme.ACCENT if is_today else theme.TEXT).pack(anchor="w", padx=8, pady=(8, 0))
+                        theme.ACCENT_TEXT if is_today else theme.TEXT).pack(anchor="w", padx=8, pady=(8, 0))
             planned = sum(b["min"] for b in day["blocks"] if b["status"] != "skipped")
             theme.label(column, f"{planned} / {day['capacity_min']} min", 10, color=theme.MUTED).pack(
                 anchor="w", padx=8, pady=(0, 4))
@@ -174,9 +175,9 @@ class WeekView(BaseView):
                 chip = ctk.CTkFrame(column, fg_color=b["color"], corner_radius=6)
                 chip.pack(fill="x", padx=6, pady=2)
                 text = f"{_MARK.get(b['status'], '')}{b['start']} {_short(b['subject'])}\n{_ABBR.get(b['type'], '')} · u{b['unit']}"
+                ink = theme.CHIP_TEXT if b["status"] != "skipped" else theme.CHIP_TEXT_MUTED   # on the subject colour
                 ctk.CTkLabel(chip, text=text, font=theme.font(10, "bold"), justify="left", anchor="w",
-                             text_color="#10131A" if b["status"] != "skipped" else "#4A4F5C").pack(
-                    anchor="w", padx=6, pady=3)
+                             text_color=ink).pack(anchor="w", padx=6, pady=3)
             ctk.CTkFrame(column, fg_color="transparent", height=6).pack()
 
 

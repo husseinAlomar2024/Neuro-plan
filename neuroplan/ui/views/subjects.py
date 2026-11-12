@@ -9,10 +9,15 @@ import customtkinter as ctk
 from ... import config
 from .. import theme
 from ..widgets.common import Chip, clear, entry, field, option_menu
+from ..widgets.divider import Divider
 from . import BaseView
 
 if TYPE_CHECKING:
     from ..app import NeuroPlanApp
+
+
+_SCROLLBAR_ROOM = 22          # a scrollable column is this much wider than its canvas (scrollbar, padding)
+_ROW_INSET = 44               # card margins and paddings around a text in a subject row
 
 
 class SubjectsView(BaseView):
@@ -32,15 +37,23 @@ class SubjectsView(BaseView):
                                              progress_color=theme.ACCENT, command=self._toggle_archived)
         self.archived_switch.pack(side="right")
 
-        columns = ctk.CTkFrame(self, fg_color="transparent")
+        # subject list | divider | form; the list keeps its width, the form takes the rest
+        self.columns = columns = ctk.CTkFrame(self, fg_color="transparent")
         columns.pack(fill="both", expand=True, padx=theme.PAD - 2, pady=(0, theme.PAD))
-        columns.grid_columnconfigure(0, weight=5)
-        columns.grid_columnconfigure(1, weight=4)
+        columns.grid_columnconfigure(0, weight=0)
+        columns.grid_columnconfigure(2, weight=1)
         columns.grid_rowconfigure(0, weight=1)
-        self.table = ctk.CTkScrollableFrame(columns, fg_color="transparent")
-        self.table.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        right = ctk.CTkScrollableFrame(columns, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="nsew")
+        self.list_width = app.pane_width("pane_subjects_list")      # preferred width (the divider position)
+        self.table = theme.scrollable(columns, width=self.list_width - _SCROLLBAR_ROOM)
+        self.table.grid(row=0, column=0, sticky="nsew")
+        self.divider = Divider(columns, get_width=lambda: self.list_width, on_drag=self.set_list_width,
+                               on_commit=lambda w: app.save_pane("pane_subjects_list", w),
+                               on_reset=self._reset_list_width, minimum=config.COLUMN_MIN_WIDTH,
+                               maximum=self._list_max_width)
+        self.divider.grid(row=0, column=1, sticky="ns", padx=1)
+        right = theme.scrollable(columns, width=config.COLUMN_MIN_WIDTH - _SCROLLBAR_ROOM)
+        right.grid(row=0, column=2, sticky="nsew")
+        columns.bind("<Configure>", lambda _e: self._fit_list(), add="+")
 
         # ---- edit form
         form = theme.card(right)
@@ -99,6 +112,39 @@ class SubjectsView(BaseView):
         theme.ghost_button(row, "Clear", self._clear_assessment, width=60).pack(side="left", padx=4)
         self._new()
 
+    # ------------------------------------------------------------ list width (divider)
+    def _columns_width(self) -> int:
+        return int(self.columns.winfo_width() / ctk.ScalingTracker.get_widget_scaling(self))
+
+    def _list_max_width(self) -> int:
+        room = self._columns_width()
+        if room <= 1:
+            return config.PANE_MAX_WIDTH
+        return max(config.COLUMN_MIN_WIDTH, room - config.DIVIDER_WIDTH - 2 - config.COLUMN_MIN_WIDTH)
+
+    def shown_list_width(self) -> int:
+        """The preferred width, as far as the room allows: both columns keep at least the minimum,
+        and when even that does not fit they share the room equally."""
+        room = self._columns_width()
+        if room <= 1:
+            return self.list_width
+        if room < 2 * config.COLUMN_MIN_WIDTH + config.DIVIDER_WIDTH + 2:
+            return max(1, (room - config.DIVIDER_WIDTH - 2) // 2)
+        return max(config.COLUMN_MIN_WIDTH, min(self.list_width, self._list_max_width()))
+
+    def set_list_width(self, width: int) -> None:
+        self.list_width = max(config.COLUMN_MIN_WIDTH, int(width))
+        self._fit_list()
+
+    def _fit_list(self) -> None:
+        width = max(40, self.shown_list_width() - _SCROLLBAR_ROOM)
+        if int(self.table.cget("width")) != width:
+            self.table.configure(width=width)
+
+    def _reset_list_width(self) -> None:
+        self.set_list_width(config.SUBJECTS_LIST_DEFAULT_WIDTH)
+        self.app.save_pane("pane_subjects_list", config.SUBJECTS_LIST_DEFAULT_WIDTH)
+
     # ------------------------------------------------------------ data
     def refresh(self) -> None:
         data = self.app.read("list_subjects")
@@ -112,13 +158,16 @@ class SubjectsView(BaseView):
         clear(self.table)
         self.row_buttons = {}
         visible = self.visible_subjects()
+        canvas = self.table._parent_canvas  # noqa: SLF001 - the visible width of the list
+        empty_text = ""
         if not self.subjects:
-            theme.label(self.table, "No subjects yet. Add one on the right, or tell the coach "
-                                    "\"I have 3 subjects: …\".", 13, color=theme.MUTED, wraplength=380,
-                        justify="left").pack(anchor="w", padx=10, pady=20)
+            empty_text = "No subjects yet. Add one on the right, or tell the coach \"I have 3 subjects: …\"."
         elif not visible:
-            theme.label(self.table, "Every subject is archived. Turn on \"Show archived\" to restore one.", 13,
-                        color=theme.MUTED, wraplength=380, justify="left").pack(anchor="w", padx=10, pady=20)
+            empty_text = "Every subject is archived. Turn on \"Show archived\" to restore one."
+        if empty_text:
+            empty = theme.label(self.table, empty_text, 13, color=theme.MUTED, wraplength=380, justify="left")
+            empty.pack(anchor="w", padx=10, pady=20)
+            theme.autowrap(empty, canvas, 24)
         for s in visible:
             self._row(s)
         if self.selected and not any(s["name"] == self.selected for s in visible):
@@ -141,12 +190,18 @@ class SubjectsView(BaseView):
         top = ctk.CTkFrame(row, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(10, 2))
         Chip(top, s["name"] + ("" if s["active"] else " (archived)"), s["color_hex"], 14).pack(side="left")
-        theme.label(top, f"{s['category']} · difficulty {s['difficulty']} · mastery {s['mastery']}", 11,
-                    color=theme.MUTED).pack(side="right")
+        canvas = self.table._parent_canvas  # noqa: SLF001 - texts wrap to the visible width of the list
         mid = ctk.CTkFrame(row, fg_color="transparent")
         mid.pack(fill="x", padx=12, pady=(0, 2))
-        theme.label(mid, f"{s['done_units']} / {s['total_units']} units done · expected {s['expected_units_by_now']} · "
-                         f"{s['minutes_per_unit']} min/unit", 12).pack(side="left")
+        meta = theme.label(mid, f"{s['category']} · difficulty {s['difficulty']} · mastery {s['mastery']}", 11,
+                           color=theme.MUTED, justify="left", anchor="w")
+        meta.pack(anchor="w")
+        units = theme.label(mid, f"{s['done_units']} / {s['total_units']} units done · expected "
+                                 f"{s['expected_units_by_now']} · {s['minutes_per_unit']} min/unit", 12,
+                            justify="left", anchor="w")
+        units.pack(anchor="w")
+        for text in (meta, units):
+            theme.autowrap(text, canvas, _ROW_INSET)
         bar_row = ctk.CTkFrame(row, fg_color="transparent")
         bar_row.pack(fill="x", padx=12, pady=(2, 10))
         backlog = s["backlog_units"]
@@ -159,8 +214,10 @@ class SubjectsView(BaseView):
         upcoming = [a for a in s["assessments"] if a["days_until"] >= 0]
         if upcoming:
             a = upcoming[0]
-            theme.label(row, f"Next: {a['title']} in {a['days_until']} day(s)", 11, color=theme.MUTED).pack(
-                anchor="w", padx=12, pady=(0, 2))
+            upcoming_text = theme.label(row, f"Next: {a['title']} in {a['days_until']} day(s)", 11,
+                                        color=theme.MUTED, justify="left", anchor="w")
+            upcoming_text.pack(anchor="w", padx=12, pady=(0, 2))
+            theme.autowrap(upcoming_text, canvas, _ROW_INSET)
         foot = ctk.CTkFrame(row, fg_color="transparent")      # own line: the row is too narrow to share one
         foot.pack(fill="x", padx=12, pady=(0, 8))
         name = s["name"]
@@ -171,7 +228,7 @@ class SubjectsView(BaseView):
             toggle = theme.ghost_button(foot, "Archive", lambda: self.set_archived(name, True), width=62, height=24)
         else:
             toggle = theme.ghost_button(foot, "Restore", lambda: self.set_archived(name, False), width=62,
-                                        height=24, text_color=theme.ACCENT)
+                                        height=24, text_color=theme.ACCENT_TEXT)
         toggle.pack(side="right")
         self.row_buttons[(name, "delete")] = delete
         self.row_buttons[(name, "archive" if s["active"] else "restore")] = toggle

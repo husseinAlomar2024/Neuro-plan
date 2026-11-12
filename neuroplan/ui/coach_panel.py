@@ -9,13 +9,14 @@ import customtkinter as ctk
 
 from .. import config
 from ..models import ChatMessage
-from . import theme
+from . import fonts, theme
+from .widgets.chat_text import ChatText
 
 if TYPE_CHECKING:
     from .app import NeuroPlanApp
 
 _MAX_RENDERED = 80
-_AREA_GUESS = theme.COACH_WIDTH - 60     # width of the message list until its first <Configure> arrives
+_AREA_GUESS = config.COACH_DEFAULT_WIDTH - 60     # width of the message list until its first <Configure> arrives
 _MIN_WRAP = 80
 # Horizontal space taken around a text, subtracted from the width of the message list to get its wraplength.
 _INSET_BUBBLE = 70       # holder 6+6, bubble side margin 28, text padding 10+10, safety 10
@@ -25,9 +26,12 @@ _INSET_EVENT = 28        # centred system line: padding 10+10, safety 8
 
 
 class CoachPanel(ctk.CTkFrame):
-    def __init__(self, master: object, app: "NeuroPlanApp") -> None:
-        super().__init__(master, fg_color=theme.SURFACE, corner_radius=0, width=theme.COACH_WIDTH)
+    def __init__(self, master: object, app: "NeuroPlanApp", width: int = config.COACH_DEFAULT_WIDTH) -> None:
+        width = max(config.COACH_MIN_WIDTH, int(width))
+        super().__init__(master, fg_color=theme.SURFACE, corner_radius=0, width=width)
         self.app = app
+        self.width = width                                 # preferred width (the divider position)
+        self._shown_width = width
         self.collapsed = False
         self.unread = 0
         self._interactive: list[ctk.CTkButton] = []       # buttons of the latest coach message
@@ -45,7 +49,7 @@ class CoachPanel(ctk.CTkFrame):
                                           text_color=theme.TEXT, font=theme.font(18), command=self.toggle)
         self.strip_button.pack(pady=(14, 4))
         self.badge = ctk.CTkLabel(self.strip, text="", width=24, height=20, corner_radius=10,
-                                  fg_color=theme.DANGER, text_color="#FFFFFF", font=theme.font(11, "bold"))
+                                  fg_color=theme.DANGER, text_color=theme.ON_DANGER, font=theme.font(11, "bold"))
 
         # ---- expanded panel
         self.panel = ctk.CTkFrame(self, fg_color="transparent")
@@ -58,11 +62,11 @@ class CoachPanel(ctk.CTkFrame):
         ctk.CTkButton(head, text="⟩", width=30, height=28, corner_radius=8, fg_color=theme.SURFACE_2,
                       hover_color=theme.SURFACE_3, text_color=theme.TEXT, command=self.toggle).pack(side="right")
 
-        self.messages = ctk.CTkScrollableFrame(self.panel, fg_color=theme.BG, corner_radius=10)
+        self.messages = theme.scrollable(self.panel, fg_color=theme.BG, corner_radius=10)
         self.messages.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         # the canvas is exactly as wide as the room the bubbles have (the scrollbar sits outside it)
         self.messages._parent_canvas.bind("<Configure>", self._on_messages_resize, add="+")  # noqa: SLF001
-        self.typing =theme.label(self.panel, "", 11, color=theme.MUTED)
+        self.typing = theme.label(self.panel, "", 11, color=theme.MUTED)
         self.typing.pack(anchor="w", padx=16)
 
         chips = ctk.CTkFrame(self.panel, fg_color="transparent")
@@ -77,7 +81,8 @@ class CoachPanel(ctk.CTkFrame):
         bottom.pack(fill="x", padx=10, pady=(0, 12))
         self.input = ctk.CTkTextbox(bottom, height=64, corner_radius=10, fg_color=theme.SURFACE_2,
                                     border_width=1, border_color=theme.BORDER, text_color=theme.TEXT,
-                                    font=theme.font(13), wrap="word")
+                                    font=fonts.chat(), wrap="word", scrollbar_button_color=theme.SCROLLBAR,
+                                    scrollbar_button_hover_color=theme.SCROLLBAR_HOVER)
         self.input.pack(side="left", fill="x", expand=True)
         self.input.bind("<Return>", self._on_return)
         self.send_button = theme.primary_button(bottom, "Send", self.send, width=58, height=64)
@@ -91,10 +96,12 @@ class CoachPanel(ctk.CTkFrame):
             self.panel.pack_forget()
             self.strip.pack(fill="both", expand=True)
             self.configure(width=64)
+            self.app.coach_divider.grid_remove()
         else:
             self.strip.pack_forget()
             self.panel.pack(fill="both", expand=True)
-            self.configure(width=theme.COACH_WIDTH)
+            self.configure(width=self._shown_width)
+            self.app.coach_divider.grid()
             self.unread = 0
             self._scroll_down()
         self._show_badge()
@@ -109,6 +116,26 @@ class CoachPanel(ctk.CTkFrame):
             self.badge.pack()
         else:
             self.badge.pack_forget()
+
+    # ------------------------------------------------------------ width (divider)
+    def set_width(self, width: int) -> None:
+        """New preferred width from the divider; the bubbles re-wrap through <Configure>."""
+        self.width = max(config.COACH_MIN_WIDTH, int(width))
+        self._show(self.width)
+
+    def fit(self, maximum: int) -> None:
+        """The window changed size: show at most ``maximum`` px without forgetting the preferred width."""
+        self._show(max(config.COACH_MIN_WIDTH, min(self.width, int(maximum))))
+
+    def _show(self, width: int) -> None:
+        if width != self._shown_width:
+            self._shown_width = width
+            if not self.collapsed:
+                self.configure(width=width)
+
+    def text_size_changed(self) -> None:
+        """Fonts were resized in place (labels and bubbles re-measure themselves); keep the newest in view."""
+        self._scroll_down()
 
     def set_status(self) -> None:
         self.status.configure(text=self.app.coach.status_text())
@@ -155,12 +182,19 @@ class CoachPanel(ctk.CTkFrame):
     def _wrap(self, inset: int) -> int:
         return max(_MIN_WRAP, self._area - inset)
 
-    def _text(self, master: object, text: str, inset: int, size: int = 12, weight: str = "normal",
+    def _text(self, master: object, text: str, inset: int, size: int = 13, weight: str = "normal",
               color: theme.Color = theme.TEXT, justify: str = "left") -> ctk.CTkLabel:
         """A label that wraps to the panel width (long words break too) and re-wraps when it changes."""
-        widget = theme.label(master, text, size, weight, color, wraplength=self._wrap(inset), justify=justify,
-                             anchor="center" if justify == "center" else "w")
+        widget = ctk.CTkLabel(master, text=text, font=fonts.chat(size, weight), text_color=color,
+                              wraplength=self._wrap(inset), justify=justify,  # type: ignore[arg-type]
+                              anchor="center" if justify == "center" else "w")
         self._wrapped.append((widget, inset))
+        return widget
+
+    def _bubble_text(self, master: object, text: str, bg: theme.Token) -> ChatText:
+        """Bubble text: chat size, slightly looser line spacing, re-wraps like the labels."""
+        widget = ChatText(master, text, fonts.chat(), self._wrap(_INSET_BUBBLE), theme.TEXT, bg)
+        self._wrapped.append((widget, _INSET_BUBBLE))  # type: ignore[arg-type]
         return widget
 
     # ------------------------------------------------------------ messages
@@ -181,7 +215,7 @@ class CoachPanel(ctk.CTkFrame):
         if message.role == "user":
             self._bubble(message.text, theme.USER_BUBBLE, "e")
         elif message.role == "system_event":
-            self._text(self.messages, message.text, _INSET_EVENT, 11, color=theme.MUTED,
+            self._text(self.messages, message.text, _INSET_EVENT, 13, color=theme.MUTED,
                        justify="center").pack(fill="x", padx=10, pady=4)
         else:
             self._coach_message(message)
@@ -192,14 +226,16 @@ class CoachPanel(ctk.CTkFrame):
                 self._show_badge()
             self._scroll_down()
 
-    def _bubble(self, text: str, color: theme.Color, anchor: str, tag: str = "") -> ctk.CTkFrame:
+    def _bubble(self, text: str, color: theme.Token, anchor: str, tag: str = "") -> ctk.CTkFrame:
         holder = ctk.CTkFrame(self.messages, fg_color="transparent")
         holder.pack(fill="x", padx=6, pady=3)
-        bubble = ctk.CTkFrame(holder, fg_color=color, corner_radius=12)
+        border = theme.COACH_BUBBLE_BORDER if color is theme.COACH_BUBBLE else color
+        bubble = ctk.CTkFrame(holder, fg_color=color, corner_radius=12, border_width=1, border_color=border)
         bubble.pack(anchor=anchor, padx=(28, 0) if anchor == "e" else (0, 28))
         if tag:
-            theme.label(bubble, tag, 9, "bold", theme.ACCENT).pack(anchor="w", padx=10, pady=(6, 0))
-        self._text(bubble, text, _INSET_BUBBLE).pack(anchor="w", padx=10, pady=(2 if tag else 7, 7))
+            ctk.CTkLabel(bubble, text=tag, font=fonts.chat(10, "bold"), text_color=theme.ACCENT_TEXT,
+                         height=14).pack(anchor="w", padx=10, pady=(6, 0))
+        self._bubble_text(bubble, text, color).pack(anchor="w", padx=10, pady=(2 if tag else 8, 8))
         return bubble
 
     def _coach_message(self, message: ChatMessage) -> None:
@@ -209,22 +245,23 @@ class CoachPanel(ctk.CTkFrame):
         if actions:
             box = ctk.CTkFrame(bubble, fg_color="transparent")
             box.pack(fill="x", padx=8, pady=(0, 6))
-            theme.label(box, "ACTIONS EXECUTED", 9, "bold", theme.MUTED).pack(anchor="w", padx=2)
+            ctk.CTkLabel(box, text="ACTIONS EXECUTED", font=fonts.chat(10, "bold"), text_color=theme.MUTED,
+                         height=16).pack(anchor="w", padx=2)
             for action in actions:
                 ok = action.get("ok")
-                self._text(box, ("✓ " if ok else "✕ ") + str(action.get("summary", "")), _INSET_BADGE, 11,
+                self._text(box, ("✓ " if ok else "✕ ") + str(action.get("summary", "")), _INSET_BADGE, 13,
                            color=theme.SUCCESS if ok else theme.DANGER).pack(anchor="w", padx=2)
             if any(a.get("ok") and a.get("action_id") and a.get("tool") != "undo_last" for a in actions):
                 if self._undo_button is not None and self._undo_button.winfo_exists():
                     self._undo_button.destroy()          # Undo only on the latest action
                 self._undo_button = ctk.CTkButton(
                     box, text="Undo", width=44, height=20, fg_color="transparent", hover_color=theme.SURFACE_3,
-                    text_color=theme.ACCENT, font=theme.font(11, "bold"), command=self._undo)
+                    text_color=theme.ACCENT_TEXT, font=fonts.chat(12, "bold"), command=self._undo)
                 self._undo_button.pack(anchor="w")
         for card in payload.get("confirmations") or []:
             box = ctk.CTkFrame(bubble, fg_color=theme.SURFACE_3, corner_radius=8)
             box.pack(fill="x", padx=8, pady=(0, 8))
-            self._text(box, card.get("preview", "Confirm?"), _INSET_CARD, 12, "bold").pack(
+            self._text(box, card.get("preview", "Confirm?"), _INSET_CARD, 14, "bold").pack(
                 anchor="w", padx=8, pady=(8, 4))
             row = ctk.CTkFrame(box, fg_color="transparent")
             row.pack(anchor="w", padx=6, pady=(0, 8))
@@ -242,7 +279,8 @@ class CoachPanel(ctk.CTkFrame):
             for option in options:
                 button = ctk.CTkButton(box, text=option["label"], height=26, corner_radius=13,
                                        fg_color=theme.SURFACE, hover_color=theme.SURFACE_3, border_width=1,
-                                       border_color=theme.ACCENT, text_color=theme.ACCENT, font=theme.font(11, "bold"),
+                                       border_color=theme.ACCENT, text_color=theme.ACCENT_TEXT,
+                                       text_color_disabled=theme.DISABLED, font=fonts.chat(12, "bold"),
                                        command=lambda o=option: self._option(o["payload"], o["label"]))
                 button.pack(anchor="w", pady=2)
                 self._interactive.append(button)

@@ -66,7 +66,13 @@ line and answers the same message in offline mode; the same line is written to `
 - **Subjects** — subjects, units, expected vs. done progress (backlog bar), assessments.
 - **Reviews** — spaced-repetition reviews (1, 3, 7, 16, 35 days) with Again / Hard / Good / Easy.
 - **Settings** — provider, models, key, proactive level, daily AI call cap, end-of-day time, theme,
-  week start, plan horizon, export / import (JSON), reset to demo data.
+  text size, week start, plan horizon, export / import (JSON), reset to demo data.
+
+**Look and layout.** Three themes switch live: *Midnight* (dark, default), *Ivory & Gold* (light) and *Mist*
+(soft neutral) — in Settings or with the theme button at the bottom of the sidebar. *Text size* is
+Small / Medium / Large (chat text 13 / 15 / 17 px, the rest scales with it); **Ctrl+Plus**, **Ctrl+Minus**
+and **Ctrl+0** change it live. Drag the thin dividers between the centre view and the coach panel and
+between the subject list and the form (double-click one to reset it); positions are remembered.
 - **Coach panel** (right) — chat, proactive messages, "Actions executed" badges with **Undo**, confirm cards
   for destructive actions, option buttons for risks and skipped blocks. It collapses to an icon with an
   unread badge.

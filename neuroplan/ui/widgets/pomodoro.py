@@ -94,7 +94,7 @@ class PomodoroWidget(ctk.CTkFrame):
         t = self.timer
         self.clock.configure(text=t.clock())
         if t.phase == timer_mod.FOCUS:
-            self.phase.configure(text="FOCUS · PAUSED" if t.paused else "FOCUS", text_color=theme.ACCENT)
+            self.phase.configure(text="FOCUS · PAUSED" if t.paused else "FOCUS", text_color=theme.ACCENT_TEXT)
             self.title.configure(text=t.label or "Focus")
         elif t.phase == timer_mod.BREAK:
             self.phase.configure(text="BREAK · PAUSED" if t.paused else "BREAK", text_color=theme.SUCCESS)

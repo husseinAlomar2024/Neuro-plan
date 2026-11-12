@@ -14,7 +14,8 @@ from . import BaseView
 if TYPE_CHECKING:
     from ..app import NeuroPlanApp
 
-_RATING_COLOR = {"again": theme.DANGER, "hard": theme.WARNING, "good": theme.SUCCESS, "easy": theme.ACCENT}
+_RATING_COLOR = {"again": theme.DANGER, "hard": theme.WARNING, "good": theme.SUCCESS,
+                 "easy": theme.ACCENT_TEXT}
 
 
 class ReviewsView(BaseView):
@@ -24,7 +25,7 @@ class ReviewsView(BaseView):
         super().__init__(master, app)
         self._signature = ""
         self.header()
-        self.list = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.list = theme.scrollable(self)
         self.list.pack(fill="both", expand=True, padx=theme.PAD - 2, pady=(0, theme.PAD))
 
     def refresh(self) -> None:

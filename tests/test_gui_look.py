@@ -1,0 +1,289 @@
+"""GUI: draggable dividers that persist, live text size, live themes, DPI awareness.
+Skipped automatically when no display is available."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Iterator
+
+import pytest
+
+from neuroplan import config
+from neuroplan.db.repository import Repository
+from neuroplan.models import ChatMessage
+
+from .conftest import TODAY
+from .test_gui_smoke import _display_available, pump
+
+pytestmark = pytest.mark.skipif(not _display_available(), reason="no display available")
+
+_COLOR_ATTRS = ("fg_color", "bg_color", "border_color", "text_color", "hover_color", "button_color",
+                "button_hover_color", "progress_color", "text_color_disabled", "placeholder_text_color",
+                "scrollbar_button_color", "scrollbar_button_hover_color", "dropdown_fg_color",
+                "dropdown_hover_color", "dropdown_text_color")
+
+
+def _new_app(repo: Repository) -> Any:
+    from neuroplan.ui.app import NeuroPlanApp
+    app = NeuroPlanApp(repo, today_fn=lambda: TODAY, run_startup=False)
+    app.geometry("1280x800")
+    pump(app, 0.3)
+    return app
+
+
+@pytest.fixture
+def app(seeded: Repository) -> Iterator[Any]:
+    instance = _new_app(seeded)
+    yield instance
+    try:
+        instance.destroy()
+    except Exception:
+        pass
+
+
+def _walk(widget: Any) -> Iterator[Any]:
+    for child in widget.winfo_children():
+        yield child
+        yield from _walk(child)
+
+
+def _drag(divider: Any, dx_unscaled: int) -> None:
+    import customtkinter as ctk
+    scale = ctk.ScalingTracker.get_widget_scaling(divider)
+    divider.press(1000)
+    divider.drag_to(1000 + round(dx_unscaled * scale / 2))      # an intermediate motion event
+    divider.drag_to(1000 + round(dx_unscaled * scale))
+    divider.release()
+
+
+# ---------------------------------------------------------------- dividers
+def test_coach_divider_drags_clamps_persists_and_resets(seeded: Repository) -> None:
+    app = _new_app(seeded)
+    try:
+        app.deiconify()
+        pump(app, 0.3)
+        divider = app.coach_divider
+        assert int(divider.cget("width")) == config.DIVIDER_WIDTH and divider.cget("cursor") == "sb_h_double_arrow"
+        divider._enter()
+        assert divider.cget("fg_color") != "transparent", "the strip highlights on hover"
+        divider._leave()
+        assert divider.cget("fg_color") == "transparent"
+        assert app.panel.width == config.COACH_DEFAULT_WIDTH
+        area = app.panel._area
+        _drag(divider, -100)                                   # left = wider coach panel
+        pump(app, 0.3)
+        assert app.panel.width == config.COACH_DEFAULT_WIDTH + 100
+        assert app.panel._area > area + 60, "chat bubbles re-wrap while dragging"
+        assert seeded.get_setting("pane_coach_width") == str(config.COACH_DEFAULT_WIDTH + 100)
+        _drag(divider, 2000)                                   # far right: clamped at the minimum
+        assert app.panel.width == config.COACH_MIN_WIDTH
+        _drag(divider, -3000)                                  # far left: the centre keeps its minimum
+        assert app.panel.width == app._coach_max_width() < 3000
+        _drag(divider, app.panel.width - 444)
+        assert seeded.get_setting("pane_coach_width") == "444"
+    finally:
+        app.destroy()
+    app = _new_app(seeded)                                     # restored on the next launch
+    try:
+        assert app.panel.width == 444
+        app.coach_divider._double(None)                        # double click: back to the default
+        assert app.panel.width == config.COACH_DEFAULT_WIDTH
+        assert seeded.get_setting("pane_coach_width") == str(config.COACH_DEFAULT_WIDTH)
+    finally:
+        app.destroy()
+
+
+def test_subjects_divider_persists_and_keeps_both_columns(seeded: Repository) -> None:
+    app = _new_app(seeded)
+    try:
+        app.deiconify()
+        app.show_view("Subjects")
+        pump(app, 0.4)
+        view = app.views["Subjects"]
+        assert view.list_width == config.SUBJECTS_LIST_DEFAULT_WIDTH
+        _drag(view.divider, -80)
+        pump(app, 0.3)
+        assert view.list_width == config.SUBJECTS_LIST_DEFAULT_WIDTH - 80
+        assert seeded.get_setting("pane_subjects_list") == str(config.SUBJECTS_LIST_DEFAULT_WIDTH - 80)
+        _drag(view.divider, -1000)
+        assert view.list_width == config.COLUMN_MIN_WIDTH
+        _drag(view.divider, 3000)                              # the form column keeps its minimum too
+        room = view._columns_width()
+        assert view.list_width == room - config.DIVIDER_WIDTH - 2 - config.COLUMN_MIN_WIDTH
+        _drag(view.divider, 300 - view.list_width)
+        pump(app, 0.3)
+        # subject cards re-wrap to the narrower list: no text is wider than the list
+        canvas = view.table._parent_canvas
+        for row in view.table.winfo_children():
+            for widget in _walk(row):
+                assert widget.winfo_reqwidth() <= canvas.winfo_width() + 2
+    finally:
+        app.destroy()
+    app = _new_app(seeded)
+    try:
+        view = app.views["Subjects"]
+        assert view.list_width == 300
+        view.divider._double(None)
+        assert view.list_width == config.SUBJECTS_LIST_DEFAULT_WIDTH
+        assert seeded.get_setting("pane_subjects_list") == str(config.SUBJECTS_LIST_DEFAULT_WIDTH)
+    finally:
+        app.destroy()
+
+
+def test_collapsed_coach_hides_its_divider(app: Any) -> None:
+    app.deiconify()
+    pump(app, 0.2)
+    app.panel.toggle()
+    pump(app, 0.1)
+    assert not app.coach_divider.winfo_ismapped()
+    app.panel.toggle()
+    pump(app, 0.1)
+    assert app.coach_divider.winfo_ismapped()
+    assert int(app.panel.cget("width")) == app.panel.width
+
+
+# ---------------------------------------------------------------- text size
+def test_text_size_setting_applies_live_and_persists(app: Any, seeded: Repository) -> None:
+    from neuroplan.ui import fonts, theme
+    from neuroplan.ui.widgets.chat_text import ChatText
+    app.deiconify()
+    app.panel.add_message(ChatMessage(9100, "", "coach", "A coach message long enough to wrap onto a few "
+                                                         "lines inside the bubble of the panel."))
+    pump(app, 0.3)
+    bubble = next(w for w, _inset in reversed(app.panel._wrapped) if isinstance(w, ChatText))
+    assert fonts.chat().cget("size") == 15 and theme.font(13).cget("size") == 13
+    assert fonts.chat().cget("family") == "Segoe UI"
+    height = bubble.winfo_reqheight()
+    lines = len(bubble.lines)
+    assert height > lines * bubble._tkfont.metrics("linespace"), "bubbles have extra line spacing"
+
+    app.step_text_size(1)                                     # Ctrl+Plus
+    pump(app, 0.2)
+    assert fonts.text_size() == "Large" and seeded.get_setting("text_size") == "Large"
+    assert fonts.chat().cget("size") == 17 and theme.font(13).cget("size") == 15
+    assert bubble.winfo_reqheight() > height, "the bubble re-measured itself with the bigger font"
+    app.step_text_size(1)
+    assert fonts.text_size() == "Large"
+    app.step_text_size(-1)
+    app.step_text_size(-1)                                    # Ctrl+Minus twice
+    assert fonts.text_size() == "Small" and fonts.chat().cget("size") == 13
+    app.step_text_size(0)                                     # Ctrl+0
+    assert fonts.text_size() == "Medium" and seeded.get_setting("text_size") == "Medium"
+    app.event_generate("<Control-plus>")                     # the real key binding
+    pump(app, 0.1)
+    assert fonts.text_size() == "Large"
+    app.set_text_size("Small")
+    app.destroy()
+    again = _new_app(seeded)
+    try:
+        assert fonts.text_size() == "Small" and fonts.chat().cget("size") == 13
+        settings = again.views["Settings"]
+        again.show_view("Settings")
+        pump(again, 0.1)
+        assert settings.v["text_size"].get() == "Small"
+        settings.app_text_size("Medium")                      # the Settings dropdown applies at once
+        assert fonts.chat().cget("size") == 15
+    finally:
+        again.destroy()
+
+
+# ---------------------------------------------------------------- themes
+def _assert_themed(app: Any, name: str, subject_colors: set[str]) -> None:
+    from neuroplan.ui import theme
+    from neuroplan.ui.widgets.chat_text import ChatText
+    colors = theme.THEMES[name].colors
+    palette = {v.upper() for v in colors.values()}
+    assert app.cget("bg").upper() == colors["bg"]
+    assert app.panel.messages._parent_canvas.cget("bg").upper() == colors["bg"]
+    checked = 0
+    for widget in _walk(app):
+        if isinstance(widget, ChatText):
+            assert widget.cget("bg").upper() in (colors["user_bubble"], colors["coach_bubble"])
+            assert all(widget.itemcget(i, "fill").upper() == colors["text"] for i in widget.find_withtag("line"))
+            continue
+        if not hasattr(widget, "_apply_appearance_mode"):
+            continue
+        for attr in _COLOR_ATTRS:
+            try:
+                value = widget.cget(attr)
+            except Exception:
+                continue
+            if value is None or value == "transparent":
+                continue
+            if isinstance(value, theme.Token):
+                assert widget._apply_appearance_mode(value).upper() in palette
+                checked += 1
+                continue
+            assert isinstance(value, str) and value.upper() in subject_colors, \
+                f"{type(widget).__name__}.{attr} = {value!r} does not follow the theme"
+    assert checked > 500
+
+
+def test_themes_switch_live_and_everything_follows(app: Any, seeded: Repository) -> None:
+    from neuroplan.ui import theme
+    subject_colors = {s.color_hex.upper() for s in seeded.list_subjects()}
+    app.deiconify()
+    app.panel.add_message(ChatMessage(9200, "", "user", "hello"))
+    app.panel.add_message(ChatMessage(9201, "", "coach", "Done.", {
+        "actions": [{"tool": "set_day_override", "ok": True, "summary": "Set today", "action_id": 1}],
+        "confirmations": [{"tool": "delete_subject", "args": {}, "preview": "Delete X?"}]}))
+    for name in ("Today", "Week", "Subjects", "Reviews", "Settings"):
+        app.show_view(name)
+        pump(app, 0.1)
+    assert theme.current_theme() == "Midnight"
+    _assert_themed(app, "Midnight", subject_colors)
+    app.cycle_theme()                                          # the sidebar button
+    pump(app, 0.2)
+    assert theme.current_theme() == "Ivory & Gold" and seeded.get_setting("theme") == "Ivory & Gold"
+    assert "Ivory & Gold" in app.theme_button.cget("text")
+    _assert_themed(app, "Ivory & Gold", subject_colors)
+    app.views["Settings"].app_theme("Mist")                    # the Settings selector
+    pump(app, 0.2)
+    _assert_themed(app, "Mist", subject_colors)
+    for name in ("Today", "Week", "Subjects", "Reviews", "Settings"):     # views rebuilt after the switch
+        app.views[name]._signature = ""
+        app.show_view(name)
+        pump(app, 0.1)
+    _assert_themed(app, "Mist", subject_colors)
+    app.cycle_theme()
+    pump(app, 0.2)
+    assert theme.current_theme() == "Midnight"
+    _assert_themed(app, "Midnight", subject_colors)
+
+
+def test_theme_is_restored_on_launch(seeded: Repository) -> None:
+    from neuroplan.ui import theme
+    seeded.set_setting("theme", "Light")                      # a value stored by an older version
+    app = _new_app(seeded)
+    try:
+        assert theme.current_theme() == "Ivory & Gold"
+        assert app.cget("bg").upper() == theme.THEMES["Ivory & Gold"].colors["bg"]
+    finally:
+        app.destroy()
+
+
+# ---------------------------------------------------------------- DPI
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows only")
+def test_process_is_per_monitor_dpi_aware_before_tk_starts(tmp_path: Path) -> None:
+    """Run in a fresh process: importing the UI makes it per-monitor aware before the first Tk window,
+    so Tk measures the real DPI (tk scaling = DPI / 72) and CustomTkinter scales only once."""
+    script = (
+        "import ctypes, customtkinter as ctk\n"
+        "from neuroplan.ui import dpi, theme\n"
+        "assert dpi.process_awareness() == dpi.PER_MONITOR, dpi.process_awareness()\n"
+        "app = ctk.CTk(); app.update()\n"
+        "hwnd = int(app.wm_frame(), 16)\n"
+        "real = ctypes.windll.user32.GetDpiForWindow(hwnd)\n"
+        "tk_dpi = float(app.tk.call('tk', 'scaling')) * 72\n"
+        "assert abs(tk_dpi - real) < 2, (tk_dpi, real)\n"
+        "scale = ctk.ScalingTracker.get_widget_scaling(app)\n"
+        "assert abs(scale - real / 96) < 0.01, (scale, real)\n"
+        "label = theme.label(app, 'x', 15); label.pack(); app.update()\n"
+        "import re\n"
+        "size = int(re.search(r' (-?[0-9]+) ', str(label._label.cget('font'))).group(1))\n"
+        "assert size == -round(15 * scale), (size, scale)\n"
+        "app.destroy(); print('ok')\n")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and "ok" in out.stdout, out.stderr

@@ -76,13 +76,34 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "proactive_level": "full",
     "daily_llm_call_cap": "60",
     "end_of_day_time": "22:00",
-    "theme": "Dark",
+    "theme": "Midnight",
+    "text_size": "Medium",
     "week_start": "sun",
     "plan_horizon_days": "14",
     "conversation_summary": "",
     "last_briefing_date": "",
 }
 PROVIDERS = ("anthropic", "openai_compat", "offline")
+# ---------------------------------------------------------------- look and layout (UI preferences)
+THEME_NAMES = ("Midnight", "Ivory & Gold", "Mist")
+LEGACY_THEMES = {"Dark": "Midnight", "Light": "Ivory & Gold"}   # values stored by older versions
+CHAT_TEXT_SIZES = {"Small": 13, "Medium": 15, "Large": 17}      # chat text px; every other size scales with it
+TEXT_SIZE_NAMES = tuple(CHAT_TEXT_SIZES)
+CHAT_FONT_SIZE = 15            # chat text at "Medium"
+UI_FONT_SIZE = 13              # body text of the rest of the UI at "Medium"
+CHAT_LINE_GAP = 3              # extra px between the lines of a chat bubble (before scaling)
+DIVIDER_WIDTH = 6
+COACH_DEFAULT_WIDTH = 380
+COACH_MIN_WIDTH = 300
+COLUMN_MIN_WIDTH = 280         # any column next to a divider
+CENTRE_MIN_WIDTH = 400         # the coach divider never squeezes the centre view below this
+SUBJECTS_LIST_DEFAULT_WIDTH = 420
+PANE_MAX_WIDTH = 4000
+# divider position settings (unscaled px) and their defaults
+PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": SUBJECTS_LIST_DEFAULT_WIDTH}
+# preferences the UI stores directly through set_ui_prefs (not undoable, no plan effect)
+UI_PREFS: dict[str, tuple[str, ...] | None] = {"theme": THEME_NAMES, "text_size": TEXT_SIZE_NAMES,
+                                               **{key: None for key in PANE_SETTINGS}}
 PROACTIVE_LEVELS = ("off", "light", "full")
 # Settings the UI / tools may change, with their allowed values (None = free text / validated in code)
 EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
@@ -93,7 +114,8 @@ EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
     "proactive_level": PROACTIVE_LEVELS,
     "daily_llm_call_cap": None,
     "end_of_day_time": None,
-    "theme": ("Dark", "Light"),
+    "theme": THEME_NAMES,
+    "text_size": TEXT_SIZE_NAMES,
     "week_start": ("sun", "mon"),
     "plan_horizon_days": None,
 }
@@ -106,6 +128,13 @@ BASE_URL_ENDPOINT_SUFFIXES = ("/chat/completions", "/models")
 # server accepts strict-schema keywords); the executor validates arguments itself, so nothing is lost
 OPENAI_SCHEMA_DROP = ("format", "additionalProperties")
 ERROR_DETAIL_MAX_CHARS = 300  # how much of a provider's error message is shown and logged
+
+
+def normalize_theme(value: str) -> str:
+    """A stored theme name; values of older versions ("Dark"/"Light") map to their new theme."""
+    text = str(value or "").strip()
+    text = LEGACY_THEMES.get(text, text)
+    return text if text in THEME_NAMES else THEME_NAMES[0]
 
 
 def clean_pasted(value: str) -> str:

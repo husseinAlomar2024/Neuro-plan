@@ -64,7 +64,8 @@ class Chip(ctk.CTkFrame):
 
     def __init__(self, master: object, text: str, color: str, size: int = 12, weight: str = "bold") -> None:
         super().__init__(master, fg_color="transparent")
-        ctk.CTkFrame(self, width=10, height=10, corner_radius=5, fg_color=color).pack(side="left", padx=(0, 6))
+        ctk.CTkFrame(self, width=10, height=10, corner_radius=5, fg_color=color, border_width=1,
+                     border_color=theme.BORDER).pack(side="left", padx=(0, 6))
         self.label = theme.label(self, text, size, weight)
         self.label.pack(side="left")
 

@@ -22,6 +22,9 @@ class BaseView(ctk.CTkFrame):
     def refresh(self) -> None:
         raise NotImplementedError
 
+    def theme_changed(self) -> None:
+        """Called after a live theme switch. Widgets redraw themselves; views with cached colours override."""
+
     def header(self, subtitle: str = "") -> ctk.CTkFrame:
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", padx=theme.PAD + 4, pady=(theme.PAD + 2, 6))

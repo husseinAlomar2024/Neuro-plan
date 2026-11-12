@@ -20,7 +20,7 @@ from ..events import Event, EventBus
 from ..models import ToolResult
 from ..timer import PomodoroTimer
 from ..tools.executor import ToolExecutor
-from . import theme
+from . import fonts, theme
 from .coach_panel import CoachPanel
 from .views import BaseView
 from .views.reviews import ReviewsView
@@ -28,6 +28,7 @@ from .views.settings import SettingsView
 from .views.subjects import SubjectsView
 from .views.today import TodayView
 from .views.week import WeekView
+from .widgets.divider import Divider
 
 log = logging.getLogger(__name__)
 VIEW_NAMES = ["Today", "Week", "Subjects", "Reviews", "Settings"]
@@ -38,7 +39,9 @@ _VIEW_CLASSES: dict[str, type[BaseView]] = {"Today": TodayView, "Week": WeekView
 class NeuroPlanApp(ctk.CTk):
     def __init__(self, repo: Repository, today_fn: Callable[[], date] = date.today,
                  provider: Optional[Provider] = None, run_startup: bool = True) -> None:
-        theme.apply_appearance(repo.get_setting("theme", "Dark") or "Dark")
+        fonts.BOOK.reset()                                   # fonts of an earlier window belong to its Tk root
+        fonts.BOOK.text_size = _choice(repo.get_setting("text_size", "Medium"), config.TEXT_SIZE_NAMES, "Medium")
+        theme.apply_appearance(repo.get_setting("theme", config.THEME_NAMES[0]) or config.THEME_NAMES[0])
         super().__init__()
         self.title(config.APP_NAME)
         self.geometry("1280x800")
@@ -69,6 +72,7 @@ class NeuroPlanApp(ctk.CTk):
         self._build_sidebar()
         centre = ctk.CTkFrame(self, fg_color=theme.BG, corner_radius=0)
         centre.grid(row=0, column=1, sticky="nsew")
+        self.centre = centre
         centre.grid_rowconfigure(0, weight=1)
         centre.grid_columnconfigure(0, weight=1)
         self.toast_label = ctk.CTkLabel(centre, text="", font=theme.font(12), text_color=theme.MUTED, anchor="w",
@@ -79,9 +83,19 @@ class NeuroPlanApp(ctk.CTk):
             view = _VIEW_CLASSES[name](centre, self)
             view.grid(row=0, column=0, sticky="nsew")
             self.views[name] = view
-        self.panel = CoachPanel(self, self)
-        self.panel.grid(row=0, column=2, sticky="ns")
+        self.panel = CoachPanel(self, self, self.pane_width("pane_coach_width"))
+        self.coach_divider = Divider(self, get_width=lambda: self.panel.width, on_drag=self.panel.set_width,
+                                     on_commit=lambda w: self.save_pane("pane_coach_width", w),
+                                     on_reset=self._reset_coach_width, minimum=config.COACH_MIN_WIDTH,
+                                     maximum=self._coach_max_width, grows_left=True)
+        self.coach_divider.grid(row=0, column=2, sticky="ns")
+        self.panel.grid(row=0, column=3, sticky="ns")
         self.panel.load_history()
+        self.bind("<Configure>", self._on_window_resize, add="+")
+        for sequence, step in (("<Control-plus>", 1), ("<Control-equal>", 1), ("<Control-KP_Add>", 1),
+                               ("<Control-minus>", -1), ("<Control-KP_Subtract>", -1), ("<Control-0>", 0),
+                               ("<Control-KP_0>", 0)):
+            self.bind_all(sequence, lambda _e, s=step: self.step_text_size(s), add="+")
 
         self.bus.subscribe(events.STATE_CHANGED, self._on_state_changed)
         self.bus.subscribe(events.CHAT_MESSAGE, self._on_chat_message)
@@ -111,7 +125,80 @@ class NeuroPlanApp(ctk.CTk):
             self.nav[name] = button
         self.mode_label = theme.label(bar, "", 10, color=theme.MUTED, wraplength=theme.SIDEBAR_WIDTH - 30,
                                       justify="left")
-        self.mode_label.pack(side="bottom", anchor="w", padx=18, pady=14)
+        self.mode_label.pack(side="bottom", anchor="w", padx=18, pady=(4, 14))
+        self.theme_button = ctk.CTkButton(bar, text="", anchor="w", height=28, corner_radius=8,
+                                          fg_color="transparent", hover_color=theme.SURFACE_2, border_width=1,
+                                          border_color=theme.BORDER, text_color=theme.MUTED,
+                                          font=theme.font(11, "bold"), command=self.cycle_theme)
+        self.theme_button.pack(side="bottom", fill="x", padx=10)
+        self._label_theme_button()
+
+    # ------------------------------------------------------------ look: theme, text size, dividers
+    def _label_theme_button(self) -> None:
+        self.theme_button.configure(text=f"◐  {theme.current_theme()}")
+
+    def set_theme(self, name: str, store: bool = True) -> None:
+        """Switch the theme live (no restart) and remember it."""
+        name = config.normalize_theme(name)
+        if store:
+            self.save_prefs({"theme": name})
+        if theme.set_theme(name):
+            self._label_theme_button()
+            for view in self.views.values():
+                view.theme_changed()
+
+    def cycle_theme(self) -> None:
+        self.set_theme(theme.next_theme(theme.current_theme()))
+
+    def set_text_size(self, name: str, store: bool = True) -> None:
+        if name not in config.TEXT_SIZE_NAMES:
+            return
+        if store:
+            self.save_prefs({"text_size": name})
+        if fonts.set_text_size(name):
+            self.panel.text_size_changed()
+
+    def step_text_size(self, step: int) -> str:
+        """Ctrl+Plus / Ctrl+Minus / Ctrl+0."""
+        self.set_text_size(fonts.step_text_size(fonts.text_size(), step))
+        return "break"
+
+    def save_prefs(self, prefs: dict[str, Any]) -> bool:
+        result = self.executor.execute("set_ui_prefs", {"prefs": prefs}, "ui")
+        if not result.ok:
+            self.toast(result.summary, error=True)
+        elif self._settings:
+            self._settings.update({k: str(v) for k, v in prefs.items()})
+        return result.ok
+
+    def pane_width(self, key: str) -> int:
+        default = config.PANE_SETTINGS[key]
+        try:
+            return max(config.COLUMN_MIN_WIDTH, int(self.setting(key) or default))
+        except ValueError:
+            return default
+
+    def save_pane(self, key: str, width: int) -> None:
+        self.save_prefs({key: int(width)})
+
+    def _scale(self) -> float:
+        return float(ctk.ScalingTracker.get_widget_scaling(self))
+
+    def _coach_max_width(self) -> int:
+        """The coach panel may grow until the centre view is down to its minimum width."""
+        window = self.winfo_width() / self._scale()
+        if window <= 1:
+            return config.PANE_MAX_WIDTH
+        room = window - theme.SIDEBAR_WIDTH - config.DIVIDER_WIDTH - config.CENTRE_MIN_WIDTH
+        return max(config.COACH_MIN_WIDTH, int(room))
+
+    def _reset_coach_width(self) -> None:
+        self.panel.set_width(min(config.COACH_DEFAULT_WIDTH, self._coach_max_width()))
+        self.save_pane("pane_coach_width", config.COACH_DEFAULT_WIDTH)
+
+    def _on_window_resize(self, event: Any) -> None:
+        if event.widget is self:
+            self.panel.fit(self._coach_max_width())
 
     def show_view(self, name: str) -> None:
         if name not in self.views:
@@ -164,7 +251,8 @@ class NeuroPlanApp(ctk.CTk):
 
     def settings_changed(self) -> None:
         self._settings = {}
-        theme.apply_appearance(self.setting("theme"))
+        self.set_theme(self.setting("theme"), store=False)
+        self.set_text_size(self.setting("text_size"), store=False)
         self.coach.reload_provider()
         self.panel.set_status()
         self.mode_label.configure(text=self.coach.status_text())
@@ -271,3 +359,7 @@ class NeuroPlanApp(ctk.CTk):
                 self.after_cancel(after_id)
         self.coach.shutdown()
         super().destroy()
+
+
+def _choice(value: Optional[str], allowed: tuple[str, ...], default: str) -> str:
+    return value if value in allowed else default

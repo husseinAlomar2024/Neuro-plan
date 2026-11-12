@@ -25,7 +25,7 @@ class SettingsView(BaseView):
         super().__init__(master, app)
         self._loaded = False
         self.header()
-        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body = theme.scrollable(self)
         body.pack(fill="both", expand=True, padx=theme.PAD - 2, pady=(0, theme.PAD))
         self.v = {key: ctk.StringVar() for key in config.EDITABLE_SETTINGS}
         self.key_var = ctk.StringVar()
@@ -54,6 +54,7 @@ class SettingsView(BaseView):
         self.test_button.pack(side="left", padx=4)
         self.key_status = theme.label(row, "", 12, color=theme.MUTED, wraplength=420, justify="left")
         self.key_status.pack(side="left", padx=10)
+        theme.autowrap(self.key_status, body._parent_canvas, 330, minimum=200)  # noqa: SLF001
 
         # ---- app
         general = theme.card(body)
@@ -62,12 +63,16 @@ class SettingsView(BaseView):
                                                          pady=(10, 2))
         for col in range(4):
             general.grid_columnconfigure(col, weight=1)
-        field(general, "Theme", lambda m: option_menu(m, self.v["theme"], ["Dark", "Light"], 110), 1, 0)
+        field(general, "Theme", lambda m: option_menu(m, self.v["theme"], list(config.THEME_NAMES), 130,
+                                                      self.app_theme), 1, 0)
         field(general, "Week starts on", lambda m: option_menu(m, self.v["week_start"], ["sun", "mon"], 110), 1, 1)
         field(general, "Plan horizon (days)", lambda m: entry(m, self.v["plan_horizon_days"], 90), 1, 2)
         field(general, "End-of-day check-in (HH:MM)", lambda m: entry(m, self.v["end_of_day_time"], 90), 1, 3)
+        field(general, "Text size (Ctrl+Plus / Ctrl+Minus / Ctrl+0)",
+              lambda m: option_menu(m, self.v["text_size"], list(config.TEXT_SIZE_NAMES), 110,
+                                    self.app_text_size), 2, 0, 2)
         save_row = ctk.CTkFrame(general, fg_color="transparent")
-        save_row.grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 12))
+        save_row.grid(row=3, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 12))
         theme.primary_button(save_row, "Save settings", self._save, width=130).pack(side="left", padx=4)
         self.save_status = theme.label(save_row, "", 12, color=theme.MUTED)
         self.save_status.pack(side="left", padx=10)
@@ -76,9 +81,11 @@ class SettingsView(BaseView):
         data = theme.card(body)
         data.pack(fill="x", padx=4, pady=(8, 4))
         theme.label(data, "Data", 14, "bold").pack(anchor="w", padx=12, pady=(10, 2))
-        theme.label(data, f"Everything lives in {config.default_db_path()}. Reset and Import ask for "
-                          "confirmation in the coach panel.", 12, color=theme.MUTED, wraplength=640,
-                    justify="left").pack(anchor="w", padx=12)
+        where = theme.label(data, f"Everything lives in {config.default_db_path()}. Reset and Import ask for "
+                                  "confirmation in the coach panel.", 12, color=theme.MUTED, wraplength=640,
+                            justify="left")
+        where.pack(anchor="w", padx=12)
+        theme.autowrap(where, body._parent_canvas, 40)  # noqa: SLF001
         buttons = ctk.CTkFrame(data, fg_color="transparent")
         buttons.pack(anchor="w", padx=8, pady=(6, 12))
         theme.ghost_button(buttons, "Export data (JSON)", self._export, width=150).pack(side="left", padx=4)
@@ -116,6 +123,13 @@ class SettingsView(BaseView):
             self.key_status.configure(text="No key saved for this provider yet.", text_color=theme.WARNING)
 
     # ------------------------------------------------------------ actions
+    def app_theme(self, name: str) -> None:
+        """Picking a theme applies (and stores) it at once."""
+        self.app.set_theme(name)
+
+    def app_text_size(self, name: str) -> None:
+        self.app.set_text_size(name)
+
     def _save(self) -> bool:
         result = self.app.call("update_settings", {"settings": {k: v.get().strip() for k, v in self.v.items()}})
         if not result.ok:

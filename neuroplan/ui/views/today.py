@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from ..app import NeuroPlanApp
 
 
+_TASK_INSET = 360        # colour bar, time, paddings and the four action buttons of a pending block
+_TASK_INSET_DONE = 220   # the same with a status word instead of buttons
+
+
 class TodayView(BaseView):
     title = "Today"
 
@@ -36,7 +40,7 @@ class TodayView(BaseView):
         self.pomodoro = PomodoroWidget(self, app.timer, self._timer_answer)
         self.pomodoro.pack(fill="x", padx=theme.PAD + 4, pady=(0, 8))
         theme.label(self, "TIMELINE", 10, "bold", theme.MUTED).pack(anchor="w", padx=theme.PAD + 6)
-        self.timeline = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.timeline = theme.scrollable(self)
         self.timeline.pack(fill="both", expand=True, padx=theme.PAD - 2, pady=(2, theme.PAD))
 
     # ------------------------------------------------------------ data
@@ -67,9 +71,11 @@ class TodayView(BaseView):
     def _render(self, blocks: list[dict[str, Any]]) -> None:
         clear(self.timeline)
         if not blocks:
-            theme.label(self.timeline, "Nothing is planned for today. Tell the coach how much time you have, "
-                                       "or check your availability in Week.", 13, color=theme.MUTED,
-                        wraplength=520, justify="left").pack(anchor="w", padx=10, pady=20)
+            empty = theme.label(self.timeline, "Nothing is planned for today. Tell the coach how much time you "
+                                               "have, or check your availability in Week.", 13, color=theme.MUTED,
+                                wraplength=520, justify="left")
+            empty.pack(anchor="w", padx=10, pady=20)
+            theme.autowrap(empty, self.timeline._parent_canvas, 24)  # noqa: SLF001
             return
         for block in blocks:
             self._row(block)
@@ -92,8 +98,12 @@ class TodayView(BaseView):
         if b["locked"]:
             meta += " · locked"
         theme.label(top, meta, 11, color=theme.MUTED).pack(side="left", padx=10)
-        theme.label(body, b["task"], 12, color=theme.TEXT if pending else theme.MUTED, wraplength=430,
-                    justify="left", anchor="w").pack(anchor="w", pady=(3, 0))
+        task = theme.label(body, b["task"], 12, color=theme.TEXT if pending else theme.MUTED, wraplength=430,
+                           justify="left", anchor="w")
+        task.pack(anchor="w", pady=(3, 0))
+        # the task re-wraps with the timeline: the room left by the time column and the buttons
+        inset = _TASK_INSET if pending else _TASK_INSET_DONE
+        theme.autowrap(task, self.timeline._parent_canvas, inset)  # noqa: SLF001
         actions = ctk.CTkFrame(row, fg_color="transparent")
         actions.pack(side="right", padx=8)
         if not pending:
