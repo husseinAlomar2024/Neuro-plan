@@ -28,6 +28,7 @@ from .views.settings import SettingsView
 from .views.subjects import SubjectsView
 from .views.today import TodayView
 from .views.week import WeekView
+from .widgets.debounce import Debounce
 from .widgets.divider import Divider
 
 log = logging.getLogger(__name__)
@@ -82,15 +83,18 @@ class NeuroPlanApp(ctk.CTk):
         for name in VIEW_NAMES:
             view = _VIEW_CLASSES[name](centre, self)
             view.grid(row=0, column=0, sticky="nsew")
+            view.grid_remove()          # only the visible view is gridded, so a resize redraws only that one
             self.views[name] = view
         self.panel = CoachPanel(self, self, self.pane_width("pane_coach_width"))
-        self.coach_divider = Divider(self, get_width=lambda: self.panel.width, on_drag=self.panel.set_width,
+        self.coach_divider = Divider(self, get_width=lambda: self.panel.width, on_apply=self.panel.set_width,
                                      on_commit=lambda w: self.save_pane("pane_coach_width", w),
                                      on_reset=self._reset_coach_width, minimum=config.COACH_MIN_WIDTH,
                                      maximum=self._coach_max_width, grows_left=True)
         self.coach_divider.grid(row=0, column=2, sticky="ns")
         self.panel.grid(row=0, column=3, sticky="ns")
         self.panel.load_history()
+        # window resize / maximise / restore: fit the panes once the burst of <Configure> events is over
+        self._fit_panes = Debounce(self, lambda: self.panel.fit(self._coach_max_width()))
         self.bind("<Configure>", self._on_window_resize, add="+")
         for sequence, step in (("<Control-plus>", 1), ("<Control-equal>", 1), ("<Control-KP_Add>", 1),
                                ("<Control-minus>", -1), ("<Control-KP_Subtract>", -1), ("<Control-0>", 0),
@@ -197,8 +201,8 @@ class NeuroPlanApp(ctk.CTk):
         self.save_pane("pane_coach_width", config.COACH_DEFAULT_WIDTH)
 
     def _on_window_resize(self, event: Any) -> None:
-        if event.widget is self:
-            self.panel.fit(self._coach_max_width())
+        if event.widget is self:              # the toplevel tag also sees every child's <Configure>
+            self._fit_panes()
 
     def show_view(self, name: str) -> None:
         if name not in self.views:
@@ -207,7 +211,10 @@ class NeuroPlanApp(ctk.CTk):
         for key, button in self.nav.items():
             button.configure(fg_color=theme.SURFACE_3 if key == name else "transparent")
         view = self.views[name]
-        view.tkraise()
+        for other in self.views.values():
+            if other is not view:
+                other.grid_remove()
+        view.grid()
         if isinstance(view, SettingsView):
             view._loaded = False        # entering Settings always shows the stored values
         self._refresh_view(view)
@@ -354,6 +361,7 @@ class NeuroPlanApp(ctk.CTk):
 
     def destroy(self) -> None:
         self._closing = True
+        self._fit_panes.cancel()
         for after_id in list(self._after_ids.values()) + ([self._toast_after] if self._toast_after else []):
             with contextlib.suppress(Exception):
                 self.after_cancel(after_id)

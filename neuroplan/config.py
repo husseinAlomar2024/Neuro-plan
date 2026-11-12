@@ -99,6 +99,7 @@ COLUMN_MIN_WIDTH = 280         # any column next to a divider
 CENTRE_MIN_WIDTH = 400         # the coach divider never squeezes the centre view below this
 SUBJECTS_LIST_DEFAULT_WIDTH = 420
 PANE_MAX_WIDTH = 4000
+RESIZE_DEBOUNCE_MS = 80        # re-wrap / re-fit once, this long after the last <Configure> of a resize
 # divider position settings (unscaled px) and their defaults
 PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": SUBJECTS_LIST_DEFAULT_WIDTH}
 # preferences the UI stores directly through set_ui_prefs (not undoable, no plan effect)

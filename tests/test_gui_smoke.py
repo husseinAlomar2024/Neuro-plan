@@ -41,10 +41,28 @@ def pump(app, seconds: float = 0.0, until=None) -> None:  # type: ignore[no-unty
     app.process_ui_queue()
 
 
+def make_app(repo: Repository, attempts: int = 3) -> object:
+    """Build the app window. On this machine Tk's own start-up occasionally fails to read one of its
+    Tcl library files ("couldn't read file .../init.tcl", "Can't find a usable tk.tcl"); that happens
+    inside _tkinter.create, before any app code runs, so it is retried."""
+    import tkinter
+
+    from neuroplan.ui.app import NeuroPlanApp
+    for attempt in range(attempts):
+        try:
+            return NeuroPlanApp(repo, today_fn=lambda: TODAY, run_startup=False)
+        except tkinter.TclError as exc:
+            text = str(exc)
+            if attempt == attempts - 1 or not ("couldn't read file" in text or "usable" in text
+                                               or "tcl_findLibrary" in text):
+                raise
+            time.sleep(0.5)
+    raise AssertionError("unreachable")
+
+
 @pytest.fixture
 def app(seeded: Repository) -> Iterator[object]:
-    from neuroplan.ui.app import NeuroPlanApp
-    instance = NeuroPlanApp(seeded, today_fn=lambda: TODAY, run_startup=False)
+    instance = make_app(seeded)
     instance.withdraw()
     yield instance
     try:

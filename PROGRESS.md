@@ -18,6 +18,7 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 - Live provider fix (2026-11-11): provider errors carry the HTTP status and the service's message and are classified (rejected key / access denied / wrong Base URL / unknown model / rate limit or quota / rejected request / no connection); Test connection, chat notice and log show that reason; Base URL, model names and key are cleaned on save and on use; `build_exe.bat` can install while the app is running; `tests/test_provider_errors.py`.
 - Look and layout (2026-11-12): DPI awareness before Tk starts (`ui/dpi.py`), shared Segoe UI fonts (`ui/fonts.py`, chat 15 / UI 13), Text size Small/Medium/Large with Ctrl+Plus/Minus/0, three live themes as tokens in `ui/theme.py` (Midnight, Ivory & Gold, Mist; selector in Settings and a sidebar button), draggable dividers (coach panel, Subjects list) saved via `set_ui_prefs`, bubble text with looser line spacing (`widgets/chat_text.py`); `tests/test_theme.py`, `tests/test_gui_look.py`.
 
+- Smooth dragging (2026-11-12): ghost-line divider drag (resize once on release), debounced re-wrap and pane fit after window resize / maximise; `tests/test_gui_look.py` (50 motion events → one resize, one re-wrap).
 ## Verification
 - `.venv\Scripts\python -m pytest -q` → 391 passed (2026-11-12).
 - `build_exe.bat` (2026-11-11, after the provider fix) → `dist\NeuroPlan.exe` (about 29 MB) installed to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe` while the app was running: the running exe was set aside as `NeuroPlan.exe.old`, the database and log were untouched, the shortcut was rewritten. The new exe has not been started yet (the open app is still the old build). The earlier build was smoke-tested from a scratch folder with a redirected `LOCALAPPDATA` (data folder created, old database copied once).
@@ -30,6 +31,7 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 ## Known issues
 - No successful live chat round-trip has been seen yet: the only real endpoint tried (Gemini, see Verification) refuses the project with HTTP 403, so a tool call against a real model, and whether Gemini accepts the full tool list, are still unverified. Everything else about the providers is checked against a mock HTTP transport and a scripted FakeProvider.
 - GUI tests were slow on 2026-11-11 (suite 128 s instead of about 40 s) and one full run was stopped after 400 s without output; the rerun passed.
+- Creating many Tk windows in one test run occasionally fails inside Tk's own start-up on this machine ("couldn't read file …/ttk/entry.tcl", "invalid command name tcl_findLibrary" — Tcl library files that exist); a rerun passes. Not caused by app code. The GUI test fixtures retry the window creation for exactly these errors (`make_app` in `tests/test_gui_smoke.py`).
 - GUI tests need a display; they are skipped automatically without one.
 
 ## Environment

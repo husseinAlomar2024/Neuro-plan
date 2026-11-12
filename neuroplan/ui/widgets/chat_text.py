@@ -118,12 +118,16 @@ class ChatText(tkinter.Canvas):
 
     def _layout(self) -> None:
         px = max(1, round(int(self._font.cget("size")) * self._scale))
-        if px != self._px:
+        font_changed = px != self._px
+        if font_changed:
             self._px = px
             self._widths.clear()
             self._tkfont.configure(size=-px, weight=self._font.cget("weight"))
         limit = max(1, round(self._wrap * self._scale))
-        self.lines = wrap_text(self.text, limit, self._measure, self._measure(" "))
+        lines = wrap_text(self.text, limit, self._measure, self._measure(" "))
+        if lines == self.lines and not font_changed:
+            return                                  # same line breaks: nothing to redraw
+        self.lines = lines
         line_height = int(self._tkfont.metrics("linespace"))
         gap = round(self._gap * self._scale)
         width = max((self._tkfont.measure(line) for line in self.lines), default=0) + 1

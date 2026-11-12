@@ -9,6 +9,7 @@ import customtkinter as ctk
 from ... import config
 from .. import theme
 from ..widgets.common import Chip, clear, entry, field, option_menu
+from ..widgets.debounce import Debounce
 from ..widgets.divider import Divider
 from . import BaseView
 
@@ -46,14 +47,15 @@ class SubjectsView(BaseView):
         self.list_width = app.pane_width("pane_subjects_list")      # preferred width (the divider position)
         self.table = theme.scrollable(columns, width=self.list_width - _SCROLLBAR_ROOM)
         self.table.grid(row=0, column=0, sticky="nsew")
-        self.divider = Divider(columns, get_width=lambda: self.list_width, on_drag=self.set_list_width,
+        self.divider = Divider(columns, get_width=lambda: self.list_width, on_apply=self.set_list_width,
                                on_commit=lambda w: app.save_pane("pane_subjects_list", w),
                                on_reset=self._reset_list_width, minimum=config.COLUMN_MIN_WIDTH,
                                maximum=self._list_max_width)
         self.divider.grid(row=0, column=1, sticky="ns", padx=1)
         right = theme.scrollable(columns, width=config.COLUMN_MIN_WIDTH - _SCROLLBAR_ROOM)
         right.grid(row=0, column=2, sticky="nsew")
-        columns.bind("<Configure>", lambda _e: self._fit_list(), add="+")
+        self._fit_later = Debounce(self, self._fit_list)              # once after a window resize
+        columns.bind("<Configure>", lambda _e: self._fit_later(), add="+")
 
         # ---- edit form
         form = theme.card(right)

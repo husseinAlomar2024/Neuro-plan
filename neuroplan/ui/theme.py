@@ -280,18 +280,27 @@ def autowrap(widget: ctk.CTkLabel, container: Any, inset: int, minimum: int = 12
     if items is None:
         items = []
         container._np_autowrap = items  # noqa: SLF001 - bookkeeping on the container itself
-        container.bind("<Configure>", lambda event: _fit_wraps(container, event.width), add="+")
+        from .widgets.debounce import Debounce      # (late import: widgets import this module)
+        later = Debounce(container, lambda: _fit_wraps(container, container.winfo_width()))
+        container._np_autowrap_later = later  # noqa: SLF001
+        container.bind("<Configure>", lambda _event: later(), add="+")   # bound once per container
     items[:] = [item for item in items if item[0].winfo_exists()]
     items.append((widget, inset, minimum))
-    if container.winfo_width() > 1:
-        _fit_wraps(container, container.winfo_width())
+    if container.winfo_width() > 1:                 # fit just the new label now; the others already fit
+        _fit_one(widget, inset, minimum, container.winfo_width())
 
 
 def _fit_wraps(container: Any, real_width: int) -> None:
+    if real_width <= 1:
+        return
     items: list[tuple[ctk.CTkLabel, int, int]] = getattr(container, "_np_autowrap", [])
     items[:] = [item for item in items if item[0].winfo_exists()]
     for widget, inset, minimum in items:
-        scale = ctk.ScalingTracker.get_widget_scaling(widget)
-        width = max(minimum, int(real_width / scale) - inset)
-        if widget.cget("wraplength") != width:
-            widget.configure(wraplength=width)
+        _fit_one(widget, inset, minimum, real_width)
+
+
+def _fit_one(widget: ctk.CTkLabel, inset: int, minimum: int, real_width: int) -> None:
+    scale = ctk.ScalingTracker.get_widget_scaling(widget)
+    width = max(minimum, int(real_width / scale) - inset)
+    if widget.cget("wraplength") != width:           # unchanged width: no reconfigure, no redraw
+        widget.configure(wraplength=width)

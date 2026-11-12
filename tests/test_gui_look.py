@@ -14,7 +14,7 @@ from neuroplan.db.repository import Repository
 from neuroplan.models import ChatMessage
 
 from .conftest import TODAY
-from .test_gui_smoke import _display_available, pump
+from .test_gui_smoke import _display_available, make_app, pump
 
 pytestmark = pytest.mark.skipif(not _display_available(), reason="no display available")
 
@@ -25,8 +25,7 @@ _COLOR_ATTRS = ("fg_color", "bg_color", "border_color", "text_color", "hover_col
 
 
 def _new_app(repo: Repository) -> Any:
-    from neuroplan.ui.app import NeuroPlanApp
-    app = NeuroPlanApp(repo, today_fn=lambda: TODAY, run_startup=False)
+    app = make_app(repo)
     app.geometry("1280x800")
     pump(app, 0.3)
     return app
@@ -287,3 +286,92 @@ def test_process_is_per_monitor_dpi_aware_before_tk_starts(tmp_path: Path) -> No
     root = Path(__file__).resolve().parent.parent
     out = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and "ok" in out.stdout, out.stderr
+
+
+# ---------------------------------------------------------------- smooth dragging
+def test_drag_moves_only_a_ghost_line_and_resizes_once_on_release(app: Any, seeded: Repository) -> None:
+    """50 motion events in one drag: no pane width or wraplength changes until the button is released,
+    then the width is applied exactly once and the texts re-wrap exactly once."""
+    from types import SimpleNamespace
+
+    import customtkinter as ctk
+
+    from neuroplan.ui.widgets.chat_text import ChatText
+    app.deiconify()
+    panel, divider = app.panel, app.coach_divider
+    panel.add_message(ChatMessage(9300, "", "coach", "A long coach answer that wraps over several lines in the "
+                                                     "bubble, so a wider panel gives it fewer lines. " * 3))
+    pump(app, 0.4)
+    bubble = next(w for w, _inset in reversed(panel._wrapped) if isinstance(w, ChatText))
+    applied: list[int] = []
+    real_apply = divider.on_apply
+    divider.on_apply = lambda w: (applied.append(w), real_apply(w))
+    rewraps: list[int] = []
+    real_rewrap = panel.rewrap
+
+    def spy_rewrap(width: int) -> None:
+        if width != panel._area:
+            rewraps.append(width)
+        real_rewrap(width)
+    panel.rewrap = spy_rewrap
+    wraps: list[int] = []
+    real_configure = bubble.configure
+
+    def spy_configure(cnf: Any = None, **kwargs: Any) -> Any:
+        if "wraplength" in kwargs:
+            wraps.append(kwargs["wraplength"])
+        return real_configure(cnf, **kwargs)
+    bubble.configure = spy_configure
+
+    scale = ctk.ScalingTracker.get_widget_scaling(divider)
+    width0, shown0, wrap0, area0 = panel.width, int(panel.cget("width")), bubble.cget("wraplength"), panel._area
+    canvas_width0 = panel.messages._parent_canvas.winfo_width()
+    divider._press(SimpleNamespace(x_root=1000))
+    xs: list[int] = []
+    for i in range(1, 51):                                   # 50 motion events, 2 px each, to the left
+        divider._motion(SimpleNamespace(x_root=1000 - round(i * 2 * scale)))
+        app.update()
+        xs.append(divider.ghost_x())
+        assert divider.ghost.winfo_ismapped(), "the ghost line follows the mouse"
+        assert panel.width == width0 and int(panel.cget("width")) == shown0, "no resize while dragging"
+        assert bubble.cget("wraplength") == wrap0 and panel._area == area0
+    assert xs == sorted(xs, reverse=True) and xs[0] > xs[-1] >= 0
+    assert panel.messages._parent_canvas.winfo_width() == canvas_width0
+    assert not applied and not rewraps and not wraps
+    divider._release(SimpleNamespace())
+    assert not divider.ghost.winfo_ismapped()
+    pump(app, 0.5)
+    assert applied == [width0 + 100], "the width is applied once, on release"
+    assert panel.width == width0 + 100 and seeded.get_setting("pane_coach_width") == str(width0 + 100)
+    assert len(rewraps) == 1 and len(wraps) == 1, "the texts re-wrap exactly once"
+    assert bubble.cget("wraplength") > wrap0
+
+    # the line stops at the limit instead of following the mouse past it
+    divider.press(1000)
+    divider.drag_to(1000 + 5000)
+    limit_x = divider.ghost_x()
+    divider.drag_to(1000 + 9000)
+    assert divider.ghost_x() == limit_x and divider.pending_width == config.COACH_MIN_WIDTH
+    divider.release()
+    pump(app, 0.3)
+    assert panel.width == config.COACH_MIN_WIDTH and len(applied) == 2
+
+
+def test_window_resize_fits_panes_once_after_the_burst(app: Any) -> None:
+    """Window resize / maximise / restore: the panes are fitted and the texts re-wrapped once after the
+    burst of <Configure> events; hidden views are not gridded, so they are not resized at all."""
+    from neuroplan.ui.widgets.chat_text import ChatText
+    app.deiconify()
+    pump(app, 0.4)
+    app._fit_panes.ms = 3000                                 # a whole burst falls inside one debounce window
+    app.panel._rewrap_later.ms = 3000
+    runs, rewraps = app._fit_panes.runs, app.panel._rewrap_later.runs
+    texts = [w for w, _i in app.panel._wrapped if isinstance(w, ChatText)]
+    for width in range(1100, 1400, 30):                      # e.g. a window edge dragged, or maximise/restore
+        app.geometry(f"{width}x800")
+        app.update()
+    assert app._fit_panes.runs == runs and app.panel._rewrap_later.runs == rewraps, "nothing per event"
+    pump(app, until=lambda: not app._fit_panes.pending and not app.panel._rewrap_later.pending)
+    assert app._fit_panes.runs == runs + 1 and app.panel._rewrap_later.runs <= rewraps + 1
+    assert all(t.winfo_exists() for t in texts), "resizing reconfigures widgets, it never rebuilds them"
+    assert [n for n, v in app.views.items() if v.winfo_ismapped()] == [app.current]

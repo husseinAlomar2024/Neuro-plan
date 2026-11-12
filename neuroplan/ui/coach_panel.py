@@ -11,6 +11,7 @@ from .. import config
 from ..models import ChatMessage
 from . import fonts, theme
 from .widgets.chat_text import ChatText
+from .widgets.debounce import Debounce
 
 if TYPE_CHECKING:
     from .app import NeuroPlanApp
@@ -65,6 +66,8 @@ class CoachPanel(ctk.CTkFrame):
         self.messages = theme.scrollable(self.panel, fg_color=theme.BG, corner_radius=10)
         self.messages.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         # the canvas is exactly as wide as the room the bubbles have (the scrollbar sits outside it)
+        # bound once; the texts are re-wrapped once after the last <Configure> of a resize, not per event
+        self._rewrap_later = Debounce(self, self._rewrap_now)
         self.messages._parent_canvas.bind("<Configure>", self._on_messages_resize, add="+")  # noqa: SLF001
         self.typing = theme.label(self.panel, "", 11, color=theme.MUTED)
         self.typing.pack(anchor="w", padx=16)
@@ -167,8 +170,12 @@ class CoachPanel(ctk.CTkFrame):
         self.app.coach.submit(text)
 
     # ------------------------------------------------------------ wrapping
-    def _on_messages_resize(self, event: Any) -> None:
-        self.rewrap(int(event.width / ctk.ScalingTracker.get_widget_scaling(self)))
+    def _on_messages_resize(self, _event: Any) -> None:
+        self._rewrap_later()
+
+    def _rewrap_now(self) -> None:
+        canvas = self.messages._parent_canvas  # noqa: SLF001
+        self.rewrap(int(canvas.winfo_width() / ctk.ScalingTracker.get_widget_scaling(self)))
 
     def rewrap(self, width: int) -> None:
         """Fit every bubble text, badge line and card text to a message list ``width`` px wide."""
