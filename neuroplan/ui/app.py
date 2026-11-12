@@ -241,18 +241,20 @@ class NeuroPlanApp(ctk.CTk):
                 self._cover = win32.Cover(hwnd)
         return self._cover
 
-    def apply_layout(self, change: Callable[[], None], already_covered: bool = False) -> None:
+    def apply_layout(self, change: Callable[[], None], already_covered: bool = False,
+                     anchor: Optional[tuple[str, Any, int]] = None) -> None:
         """Apply a layout change so the user sees the old layout, then the new one, nothing in between.
 
         A snapshot of the window covers it (see ``win32.covered``) while the change, every re-wrap it
         causes, the chat scroll restoration and the repaint run in one synchronous pass underneath; then
         the cover is removed."""
         start = time.perf_counter()
-        anchor = self.panel.scroll_anchor()
+        anchor = anchor or self.panel.scroll_anchor()
         cover = None if already_covered else self.layout_cover()
         held, Debounce.held = Debounce.held, True      # no debounce timer fires inside the pass
         try:
-            with win32.covered(self, cover):
+            lines = tuple(line for line in (d.ghost_line() for d in self.dividers()) if line is not None)
+            with win32.covered(self, cover, lines):
                 change()
                 self.settle_layout()
                 self.panel.restore_scroll(anchor)
@@ -422,6 +424,7 @@ class NeuroPlanApp(ctk.CTk):
 
     def _poll(self) -> None:
         self.process_ui_queue()
+        self.panel.check_load_older()
 
     def _tick(self) -> None:
         if self.timer.running:

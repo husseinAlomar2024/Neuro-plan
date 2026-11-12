@@ -106,6 +106,12 @@ class Divider(ctk.CTkFrame):
         if self._frame_line is not None:
             self._frame_line.place_forget()
 
+    def ghost_line(self) -> Optional[tuple[tuple[int, int, int, int], str]]:
+        """(screen rect, colour) of the ghost-line popup while it is shown (Windows)."""
+        if self._line is not None and self._line.visible:
+            return self._line.rect, self._line.color
+        return None
+
     def ghost_x(self) -> Optional[int]:
         """The line's left edge in window px, None when no line is shown."""
         top = self.winfo_toplevel()

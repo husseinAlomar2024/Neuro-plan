@@ -103,6 +103,8 @@ CENTRE_MIN_WIDTHS = {"Small": 670, "Medium": 710, "Large": 740}
 WINDOW_MIN_HEIGHT = 700
 SUBJECTS_LIST_DEFAULT_WIDTH = 420
 PANE_MAX_WIDTH = 4000
+CHAT_RENDERED = 40             # chat messages rendered at start; older ones load when scrolled to the top
+CHAT_LOAD_MORE = 20            # how many older messages each load adds
 RESIZE_DEBOUNCE_MS = 80        # re-wrap / re-fit once, this long after the last <Configure> of a resize
 # divider position settings (unscaled px) and their defaults
 PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": SUBJECTS_LIST_DEFAULT_WIDTH}

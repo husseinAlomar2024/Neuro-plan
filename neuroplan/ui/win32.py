@@ -187,6 +187,27 @@ def _new_bitmap(w: int, h: int, fill: Optional[str] = None,
     return int(bitmap)
 
 
+def _window_bitmap(hwnd: int, rect: Rect, lines: tuple[tuple[Rect, str], ...] = ()) -> int:
+    """The window's own client-area picture (from its DC: a few ms, versus 20-60 ms for a screen copy),
+    with ``lines`` (screen rect, colour) painted on top: the ghost line is a separate window, so it is
+    not in the window's picture but is on screen, and the cover must match the screen exactly."""
+    x, y, w, h = rect
+    window_dc = _user32.GetDC(hwnd)
+    memory = _gdi32.CreateCompatibleDC(window_dc)
+    bitmap = _gdi32.CreateCompatibleBitmap(window_dc, w, h)
+    old = _gdi32.SelectObject(memory, bitmap)
+    _gdi32.BitBlt(memory, 0, 0, w, h, window_dc, 0, 0, SRCCOPY)
+    for (lx, ly, lw, lh), color in lines:
+        brush = _gdi32.CreateSolidBrush(_rgb(color))
+        area = wt.RECT(lx - x, ly - y, lx - x + lw, ly - y + lh)
+        _user32.FillRect(memory, ctypes.byref(area), brush)
+        _gdi32.DeleteObject(brush)
+    _gdi32.SelectObject(memory, old)
+    _gdi32.DeleteDC(memory)
+    _user32.ReleaseDC(hwnd, window_dc)
+    return int(bitmap)
+
+
 def _screen_bitmap(rect: Rect) -> int:
     """What the screen shows in ``rect`` right now (layered popups such as the ghost line included)."""
     x, y, w, h = rect
@@ -212,11 +233,12 @@ class Cover:
     def visible(self) -> bool:
         return self.popup.visible
 
-    def show(self) -> None:
+    def show(self, lines: tuple[tuple[Rect, str], ...] = ()) -> None:
+        """Cover the window with its current picture; ``lines`` are popups on screen above it (ghost)."""
         rect = client_rect(self.owner)
         if rect[2] <= 0 or rect[3] <= 0:
             return
-        self.popup.set_bitmap(_screen_bitmap(rect))
+        self.popup.set_bitmap(_window_bitmap(self.owner, rect, lines))
         self.popup.place(rect)
 
     def follow(self, background: str) -> None:
@@ -240,7 +262,7 @@ class Cover:
 
 
 @contextlib.contextmanager
-def covered(window: Any, cover: Optional[Cover]) -> Iterator[None]:
+def covered(window: Any, cover: Optional[Cover], lines: tuple[tuple[Rect, str], ...] = ()) -> Iterator[None]:
     """Keep ``cover`` (showing the current picture) above ``window`` while the block runs; it is always
     removed afterwards. Does nothing when the window is not on screen."""
     show = cover is not None
@@ -250,7 +272,7 @@ def covered(window: Any, cover: Optional[Cover]) -> Iterator[None]:
         except Exception:  # noqa: BLE001
             show = False
     if show and cover is not None:
-        cover.show()
+        cover.show(lines)
     try:
         yield
     finally:
@@ -273,6 +295,10 @@ class LineWindow:
     @property
     def rect(self) -> Rect:
         return self.popup.rect
+
+    @property
+    def color(self) -> str:
+        return self._color
 
     def show(self, x: int, y: int, w: int, h: int, color: str) -> None:
         if not IS_WINDOWS:

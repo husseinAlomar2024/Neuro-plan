@@ -214,8 +214,9 @@ class Coach:
         return text
 
     # ------------------------------------------------------------ chat
-    def history(self, limit: int = 200) -> list[ChatMessage]:
-        return self.repo.list_messages(limit)
+    def history(self, limit: int = 200, before_id: int = 0) -> list[ChatMessage]:
+        """The newest ``limit`` messages (older than ``before_id`` when given), oldest first."""
+        return self.repo.list_messages(limit, before_id=before_id)
 
     def submit(self, text: str) -> None:
         """Handle a chat message on the worker thread; results arrive as chat_message events."""

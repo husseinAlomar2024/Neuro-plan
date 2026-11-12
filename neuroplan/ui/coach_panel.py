@@ -16,7 +16,6 @@ from .widgets.debounce import Debounce
 if TYPE_CHECKING:
     from .app import NeuroPlanApp
 
-_MAX_RENDERED = 80
 _AREA_GUESS = config.COACH_DEFAULT_WIDTH - 60     # width of the message list until its first <Configure> arrives
 _MIN_WRAP = 80
 # Horizontal space taken around a text, subtracted from the width of the message list to get its wraplength.
@@ -38,6 +37,11 @@ class CoachPanel(ctk.CTkFrame):
         self._interactive: list[ctk.CTkButton] = []       # buttons of the latest coach message
         self._undo_button: Optional[ctk.CTkButton] = None
         self._rendered = 0
+        self._oldest_id = 0                                # id of the oldest rendered message
+        self.has_older = False                             # older messages exist that are not rendered
+        self._prepending = False
+        self._scroll_pending = False                       # a scroll to the bottom is scheduled
+        self._insert_before: Optional[Any] = None
         self._area = _AREA_GUESS                           # current width of the message list (unscaled px)
         self._wrapped: list[tuple[ctk.CTkLabel, int]] = []  # every wrapping text with its inset
         self.grid_propagate(False)
@@ -87,6 +91,7 @@ class CoachPanel(ctk.CTkFrame):
                                     font=fonts.chat(), wrap="word", scrollbar_button_color=theme.SCROLLBAR,
                                     scrollbar_button_hover_color=theme.SCROLLBAR_HOVER)
         theme.no_nested_idle_flush(self.input._y_scrollbar)  # noqa: SLF001
+        theme.no_nested_idle_flush(self.input._x_scrollbar)  # noqa: SLF001
         self.input.pack(side="left", fill="x", expand=True)
         self.input.bind("<Return>", self._on_return)
         self.send_button = theme.primary_button(bottom, "Send", self.send, width=58, height=64)
@@ -256,18 +261,63 @@ class CoachPanel(ctk.CTkFrame):
         self._interactive.clear()
         self._undo_button = None
         self._rendered = 0
-        for message in self.app.coach.history(_MAX_RENDERED):
+        history = self.app.coach.history(config.CHAT_RENDERED)
+        self._oldest_id = history[0].id if history else 0
+        self.has_older = len(history) == config.CHAT_RENDERED
+        for message in history:
             self.add_message(message, live=False)
         self._scroll_down()
 
+    def check_load_older(self) -> None:
+        """Called by the app's poll: at the top of the list, render the next older messages."""
+        if not self.has_older or self.collapsed or self._prepending or self._scroll_pending:
+            return
+        canvas = self.messages._parent_canvas  # noqa: SLF001
+        first, last = canvas.yview()
+        if canvas.winfo_height() > 1 and first <= 0.0 and last < 1.0 and self.messages.winfo_children():
+            self.load_older()          # scrolled to the top of a list taller than the view
+
+    def load_older(self) -> int:
+        """Prepend up to CHAT_LOAD_MORE older messages; the message at the top edge stays where it is
+        (applied atomically, so the list never jumps). Returns how many were added."""
+        older = (self.app.coach.history(config.CHAT_LOAD_MORE, before_id=self._oldest_id)
+                 if self._oldest_id else [])
+        self.has_older = len(older) == config.CHAT_LOAD_MORE
+        if not older:
+            return 0
+        self._oldest_id = older[0].id
+
+        def prepend() -> None:
+            first = self.messages.winfo_children()[0] if self.messages.winfo_children() else None
+            self._prepending, self._insert_before = True, first
+            latest = list(self._interactive)          # only the newest message keeps active buttons
+            try:
+                for message in older:
+                    self.add_message(message, live=False)
+            finally:
+                self._prepending, self._insert_before = False, None
+                for button in self._interactive:
+                    if button not in latest and button.winfo_exists():
+                        button.configure(state="disabled")
+                self._interactive = latest
+        self.app.apply_layout(prepend, anchor=("top", self.messages.winfo_children()[0], 0)
+                              if self.messages.winfo_children() else None)
+        return len(older)
+
+    def _pack(self, widget: Any, **options: Any) -> None:
+        """Pack a message row at the end, or before the first row while older messages are prepended."""
+        if self._insert_before is not None:
+            options["before"] = self._insert_before
+        widget.pack(**options)
+
     def add_message(self, message: ChatMessage, live: bool = True) -> None:
-        if message.role != "user":
+        if message.role != "user" and not self._prepending:
             self._retire_interactive()
         if message.role == "user":
             self._bubble(message.text, theme.USER_BUBBLE, "e")
         elif message.role == "system_event":
-            self._text(self.messages, message.text, _INSET_EVENT, 13, color=theme.MUTED,
-                       justify="center").pack(fill="x", padx=10, pady=4)
+            self._pack(self._text(self.messages, message.text, _INSET_EVENT, 13, color=theme.MUTED,
+                                  justify="center"), fill="x", padx=10, pady=4)
         else:
             self._coach_message(message)
         self._rendered += 1
@@ -279,7 +329,7 @@ class CoachPanel(ctk.CTkFrame):
 
     def _bubble(self, text: str, color: theme.Token, anchor: str, tag: str = "") -> ctk.CTkFrame:
         holder = ctk.CTkFrame(self.messages, fg_color="transparent")
-        holder.pack(fill="x", padx=6, pady=3)
+        self._pack(holder, fill="x", padx=6, pady=3)
         border = theme.COACH_BUBBLE_BORDER if color is theme.COACH_BUBBLE else color
         bubble = ctk.CTkFrame(holder, fg_color=color, corner_radius=12, border_width=1, border_color=border)
         bubble.pack(anchor=anchor, padx=(28, 0) if anchor == "e" else (0, 28))
@@ -302,7 +352,8 @@ class CoachPanel(ctk.CTkFrame):
                 ok = action.get("ok")
                 self._text(box, ("✓ " if ok else "✕ ") + str(action.get("summary", "")), _INSET_BADGE, 13,
                            color=theme.SUCCESS if ok else theme.DANGER).pack(anchor="w", padx=2)
-            if any(a.get("ok") and a.get("action_id") and a.get("tool") != "undo_last" for a in actions):
+            if not self._prepending and any(a.get("ok") and a.get("action_id") and a.get("tool") != "undo_last"
+                                            for a in actions):
                 if self._undo_button is not None and self._undo_button.winfo_exists():
                     self._undo_button.destroy()          # Undo only on the latest action
                 self._undo_button = ctk.CTkButton(
@@ -355,7 +406,9 @@ class CoachPanel(ctk.CTkFrame):
 
     def _scroll_down(self) -> None:
         def move() -> None:
+            self._scroll_pending = False
             with contextlib.suppress(Exception):       # the panel may already be destroyed
                 self.update_idletasks()
                 self.restore_scroll(("bottom", None, 0))
+        self._scroll_pending = True
         self.after(60, move)

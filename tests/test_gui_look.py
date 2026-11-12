@@ -494,3 +494,26 @@ def test_pane_limits_keep_the_centre_view_unclipped(app: Any) -> None:
     app.set_text_size("Large", store=False)
     assert app.centre_min_width() == 740 and fonts.text_size() == "Large"
     assert abs(app.wm_minsize()[0] - app.window_min_width() * app._scale()) <= 1
+
+
+def test_chat_renders_the_latest_40_and_loads_older_at_the_top(app: Any, seeded: Repository) -> None:
+    for i in range(70):
+        seeded.add_message("coach" if i % 2 else "user", f"message {i}")
+    panel = app.panel
+    panel.load_history()
+    app.deiconify()
+    pump(app, 0.4)
+    texts = lambda: [w.text for w, _i in panel._wrapped if hasattr(w, "text")]  # noqa: E731
+    assert len(panel.messages.winfo_children()) == config.CHAT_RENDERED and panel.has_older
+    assert texts()[-1] == "message 69" and "message 29" not in texts()
+    canvas = panel.messages._parent_canvas
+    first = panel.messages.winfo_children()[0]
+    canvas.yview_moveto(0.0)
+    pump(app, 0.3)                                   # the poll loads 20 older ones, the top message stays put
+    assert len(panel.messages.winfo_children()) >= config.CHAT_RENDERED + config.CHAT_LOAD_MORE
+    assert "message 29" in texts()
+    assert abs(first.winfo_rooty() - canvas.winfo_rooty()) <= 2, "no jump: the same message is at the top edge"
+    by_y = sorted((w.winfo_rooty(), int(w.text.split()[1])) for w, _i in panel._wrapped
+                  if hasattr(w, "text") and w.text.startswith("message "))
+    order = [n for _y, n in by_y]
+    assert order == sorted(order), "older messages are shown above the newer ones"
