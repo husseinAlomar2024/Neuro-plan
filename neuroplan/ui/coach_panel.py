@@ -67,7 +67,7 @@ class CoachPanel(ctk.CTkFrame):
         self.messages.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         # the canvas is exactly as wide as the room the bubbles have (the scrollbar sits outside it)
         # bound once; the texts are re-wrapped once after the last <Configure> of a resize, not per event
-        self._rewrap_later = Debounce(self, self._rewrap_now)
+        self._rewrap_later = Debounce(self, self._rewrap_keep_scroll)
         self.messages._parent_canvas.bind("<Configure>", self._on_messages_resize, add="+")  # noqa: SLF001
         self.typing = theme.label(self.panel, "", 11, color=theme.MUTED)
         self.typing.pack(anchor="w", padx=16)
@@ -86,6 +86,7 @@ class CoachPanel(ctk.CTkFrame):
                                     border_width=1, border_color=theme.BORDER, text_color=theme.TEXT,
                                     font=fonts.chat(), wrap="word", scrollbar_button_color=theme.SCROLLBAR,
                                     scrollbar_button_hover_color=theme.SCROLLBAR_HOVER)
+        theme.no_nested_idle_flush(self.input._y_scrollbar)  # noqa: SLF001
         self.input.pack(side="left", fill="x", expand=True)
         self.input.bind("<Return>", self._on_return)
         self.send_button = theme.primary_button(bottom, "Send", self.send, width=58, height=64)
@@ -173,18 +174,61 @@ class CoachPanel(ctk.CTkFrame):
     def _on_messages_resize(self, _event: Any) -> None:
         self._rewrap_later()
 
-    def _rewrap_now(self) -> None:
+    def rewrap_now(self) -> bool:
+        """Re-wrap to the message list's current width now; True when anything changed."""
+        self._rewrap_later.cancel()
         canvas = self.messages._parent_canvas  # noqa: SLF001
-        self.rewrap(int(canvas.winfo_width() / ctk.ScalingTracker.get_widget_scaling(self)))
+        if canvas.winfo_width() <= 1:
+            return False
+        return self.rewrap(int(canvas.winfo_width() / ctk.ScalingTracker.get_widget_scaling(self)))
 
-    def rewrap(self, width: int) -> None:
+    def _rewrap_keep_scroll(self) -> None:
+        anchor = self.scroll_anchor()          # the texts still have their old wrapping here
+        if self.rewrap_now():
+            self.update_idletasks()
+            self.restore_scroll(anchor)
+
+    def rewrap(self, width: int) -> bool:
         """Fit every bubble text, badge line and card text to a message list ``width`` px wide."""
         if width < _MIN_WRAP or width == self._area:
-            return
+            return False
         self._area = width
         self._wrapped = [(text, inset) for text, inset in self._wrapped if text.winfo_exists()]
         for text, inset in self._wrapped:
             text.configure(wraplength=self._wrap(inset))
+        return True
+
+    # ------------------------------------------------------------ scroll position
+    def scroll_anchor(self) -> tuple[str, Optional[Any], int]:
+        """What the list shows now: ("bottom", None, 0) when scrolled to the end, otherwise
+        ("top", message widget at the top edge, px of it above the edge)."""
+        canvas = self.messages._parent_canvas  # noqa: SLF001
+        children = self.messages.winfo_children()
+        if not children or canvas.yview()[1] >= 0.999:
+            return ("bottom", None, 0)
+        top = int(canvas.canvasy(0))
+        for child in children:
+            if child.winfo_y() + child.winfo_height() > top:
+                return ("top", child, top - child.winfo_y())
+        return ("bottom", None, 0)
+
+    def restore_scroll(self, anchor: tuple[str, Optional[Any], int]) -> None:
+        """Bring the scroll region up to date and show the anchor again: the bottom stays the bottom,
+        otherwise the same message stays at the top edge; the view is clamped to the content, so the
+        list is never scrolled past its end (blank)."""
+        canvas = self.messages._parent_canvas  # noqa: SLF001
+        box = canvas.bbox("all")
+        if not box:
+            return
+        content = max(1, box[3] - box[1])
+        view = max(1, canvas.winfo_height())
+        canvas.configure(scrollregion=box)
+        kind, child, offset = anchor
+        target = content - view
+        if kind == "top" and child is not None and child.winfo_exists():
+            target = child.winfo_y() + max(0, min(offset, child.winfo_height() - 1))
+        target = max(0, min(target, content - view))
+        canvas.yview_moveto(target / content if content > view else 0.0)
 
     def _wrap(self, inset: int) -> int:
         return max(_MIN_WRAP, self._area - inset)
@@ -312,5 +356,6 @@ class CoachPanel(ctk.CTkFrame):
     def _scroll_down(self) -> None:
         def move() -> None:
             with contextlib.suppress(Exception):       # the panel may already be destroyed
-                self.messages._parent_canvas.yview_moveto(1.0)  # noqa: SLF001 - no public API for this
+                self.update_idletasks()
+                self.restore_scroll(("bottom", None, 0))
         self.after(60, move)

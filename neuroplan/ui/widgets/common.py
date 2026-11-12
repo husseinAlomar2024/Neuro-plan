@@ -95,11 +95,12 @@ def entry(master: object, variable: ctk.StringVar, width: int = 140, show: str =
 
 def option_menu(master: object, variable: ctk.StringVar, values: list[str], width: int = 140,
                 command: Optional[Callable[[str], None]] = None) -> ctk.CTkOptionMenu:
-    return ctk.CTkOptionMenu(master, variable=variable, values=values, width=width, height=30,
+    menu = ctk.CTkOptionMenu(master, variable=variable, values=values, width=width, height=30,
                              fg_color=theme.SURFACE_2, button_color=theme.SURFACE_3,
                              button_hover_color=theme.BORDER, text_color=theme.TEXT,
                              dropdown_fg_color=theme.SURFACE, dropdown_text_color=theme.TEXT,
                              dropdown_hover_color=theme.SURFACE_3, font=theme.font(12), command=command)
+    return theme.no_nested_idle_flush(menu)
 
 
 def clear(frame: ctk.CTkBaseClass) -> None:

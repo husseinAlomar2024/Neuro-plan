@@ -7,6 +7,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import queue
+import time
+import tkinter
 from datetime import date
 from typing import Any, Callable, Optional
 
@@ -20,7 +22,7 @@ from ..events import Event, EventBus
 from ..models import ToolResult
 from ..timer import PomodoroTimer
 from ..tools.executor import ToolExecutor
-from . import fonts, theme
+from . import fonts, theme, win32
 from .coach_panel import CoachPanel
 from .views import BaseView
 from .views.reviews import ReviewsView
@@ -46,7 +48,7 @@ class NeuroPlanApp(ctk.CTk):
         super().__init__()
         self.title(config.APP_NAME)
         self.geometry("1280x800")
-        self.minsize(1024, 700)
+        self.minsize(self.window_min_width(), config.WINDOW_MIN_HEIGHT)
         self.configure(fg_color=theme.BG)
         if config.icon_path().is_file():           # otherwise CustomTkinter's default icon stays
             with contextlib.suppress(Exception):   # an unreadable icon must not stop the app
@@ -86,16 +88,23 @@ class NeuroPlanApp(ctk.CTk):
             view.grid_remove()          # only the visible view is gridded, so a resize redraws only that one
             self.views[name] = view
         self.panel = CoachPanel(self, self, self.pane_width("pane_coach_width"))
-        self.coach_divider = Divider(self, get_width=lambda: self.panel.width, on_apply=self.panel.set_width,
+        self.coach_divider = Divider(self, get_width=lambda: self.panel.width,
+                                     on_apply=lambda w: self.apply_layout(
+                                         lambda: (self.coach_divider.hide_line(), self.panel.set_width(w))),
                                      on_commit=lambda w: self.save_pane("pane_coach_width", w),
-                                     on_reset=self._reset_coach_width, minimum=config.COACH_MIN_WIDTH,
+                                     on_reset=self._reset_coach_width, minimum=lambda: config.COACH_MIN_WIDTH,
                                      maximum=self._coach_max_width, grows_left=True)
         self.coach_divider.grid(row=0, column=2, sticky="ns")
         self.panel.grid(row=0, column=3, sticky="ns")
         self.panel.load_history()
         # window resize / maximise / restore: fit the panes once the burst of <Configure> events is over
-        self._fit_panes = Debounce(self, lambda: self.panel.fit(self._coach_max_width()))
+        self._fit_panes = Debounce(self, lambda: self.apply_layout(self._fit_coach))
         self.bind("<Configure>", self._on_window_resize, add="+")
+        self.bind("<Deactivate>", lambda _e: self.cancel_drags(), add="+")   # focus lost: drop a drag
+        self.bind_all("<Escape>", lambda _e: self.cancel_drags(), add="+")
+        self.layout_ms = 0.0                  # duration of the last atomic layout pass (dev tools read it)
+        self._cover: Optional[win32.Cover] = None                  # created once the window exists
+        self._max_cover: Optional[win32.MaximiseCover] = None
         for sequence, step in (("<Control-plus>", 1), ("<Control-equal>", 1), ("<Control-KP_Add>", 1),
                                ("<Control-minus>", -1), ("<Control-KP_Subtract>", -1), ("<Control-0>", 0),
                                ("<Control-KP_0>", 0)):
@@ -160,6 +169,8 @@ class NeuroPlanApp(ctk.CTk):
         if store:
             self.save_prefs({"text_size": name})
         if fonts.set_text_size(name):
+            self.minsize(self.window_min_width(), config.WINDOW_MIN_HEIGHT)
+            self.apply_layout(self._fit_coach)       # a larger text needs a wider centre view
             self.panel.text_size_changed()
 
     def step_text_size(self, step: int) -> str:
@@ -193,16 +204,101 @@ class NeuroPlanApp(ctk.CTk):
         window = self.winfo_width() / self._scale()
         if window <= 1:
             return config.PANE_MAX_WIDTH
-        room = window - theme.SIDEBAR_WIDTH - config.DIVIDER_WIDTH - config.CENTRE_MIN_WIDTH
+        room = window - theme.SIDEBAR_WIDTH - config.DIVIDER_WIDTH - self.centre_min_width()
         return max(config.COACH_MIN_WIDTH, int(room))
 
+    @staticmethod
+    def centre_min_width() -> int:
+        """The narrowest centre view that still shows the Today cards unclipped, for the text size."""
+        return config.CENTRE_MIN_WIDTHS[fonts.text_size()]
+
+    def window_min_width(self) -> int:
+        """Sidebar + divider + the narrowest coach panel + the narrowest centre view: below this the
+        window cannot be made smaller (the coach panel gives way first, then the window stops)."""
+        return theme.SIDEBAR_WIDTH + config.DIVIDER_WIDTH + config.COACH_MIN_WIDTH + self.centre_min_width()
+
     def _reset_coach_width(self) -> None:
-        self.panel.set_width(min(config.COACH_DEFAULT_WIDTH, self._coach_max_width()))
+        self.apply_layout(lambda: self.panel.set_width(config.COACH_DEFAULT_WIDTH))
         self.save_pane("pane_coach_width", config.COACH_DEFAULT_WIDTH)
 
+    def _fit_coach(self) -> None:
+        self.panel.fit(self._coach_max_width())
+
+    def dividers(self) -> list[Divider]:
+        subjects = self.views.get("Subjects")
+        return [self.coach_divider] + ([subjects.divider] if subjects is not None else [])  # type: ignore[attr-defined]
+
+    def cancel_drags(self) -> None:
+        for divider in self.dividers():
+            divider.cancel()
+
+    # ------------------------------------------------------------ atomic layout changes
+    def layout_cover(self) -> Optional[win32.Cover]:
+        """The snapshot cover of this window (Windows only, once the window exists)."""
+        if self._cover is None and win32.IS_WINDOWS:
+            hwnd = win32.toplevel_hwnd(self)
+            if hwnd:
+                self._cover = win32.Cover(hwnd)
+        return self._cover
+
+    def apply_layout(self, change: Callable[[], None], already_covered: bool = False) -> None:
+        """Apply a layout change so the user sees the old layout, then the new one, nothing in between.
+
+        A snapshot of the window covers it (see ``win32.covered``) while the change, every re-wrap it
+        causes, the chat scroll restoration and the repaint run in one synchronous pass underneath; then
+        the cover is removed."""
+        start = time.perf_counter()
+        anchor = self.panel.scroll_anchor()
+        cover = None if already_covered else self.layout_cover()
+        held, Debounce.held = Debounce.held, True      # no debounce timer fires inside the pass
+        try:
+            with win32.covered(self, cover):
+                change()
+                self.settle_layout()
+                self.panel.restore_scroll(anchor)
+                self.settle_layout()
+                self._drain_events()         # everything painted underneath before the cover goes
+        finally:
+            Debounce.held = held
+            if not held:
+                Debounce.release_held()
+        self.layout_ms = (time.perf_counter() - start) * 1000
+
+    def settle_layout(self, rounds: int = 8) -> None:
+        """Run geometry, <Configure> handlers, pending debounced re-wraps and the chat re-wrap until
+        nothing changes any more."""
+        for _ in range(rounds):
+            self.update_idletasks()
+            busy = self._drain_events() > 0
+            busy = self.panel.rewrap_now() or busy           # (also drops the panel's pending re-wrap)
+            busy = Debounce.flush_all() > 0 or busy
+            if not busy:
+                break
+
+    def _drain_events(self, limit: int = 20000) -> int:
+        """Process every event that is ready now (no waiting); returns how many ran."""
+        flags = tkinter._tkinter.ALL_EVENTS | tkinter._tkinter.DONT_WAIT  # type: ignore[attr-defined]
+        count = 0
+        while count < limit and self.tk.dooneevent(flags):
+            count += 1
+        return count
+
     def _on_window_resize(self, event: Any) -> None:
-        if event.widget is self:              # the toplevel tag also sees every child's <Configure>
-            self._fit_panes()
+        if event.widget is not self:          # the toplevel tag also sees every child's <Configure>
+            return
+        cover = self.layout_cover()
+        if self._max_cover is None and cover is not None:
+            self._max_cover = win32.MaximiseCover(cover.owner, cover, lambda: theme.resolve(theme.BG))
+        if self._max_cover is not None and self._max_cover.pending:
+            # maximise / restore: the cover went up before Windows resized the window; settle the new
+            # layout underneath in one pass, then show it
+            self._fit_panes.cancel()
+            try:
+                self.apply_layout(self._fit_coach, already_covered=True)
+            finally:
+                self._max_cover.release()
+            return
+        self._fit_panes()                     # a window edge being dragged: fit once the burst is over
 
     def show_view(self, name: str) -> None:
         if name not in self.views:
@@ -362,6 +458,12 @@ class NeuroPlanApp(ctk.CTk):
     def destroy(self) -> None:
         self._closing = True
         self._fit_panes.cancel()
+        if self._max_cover is not None:
+            self._max_cover.remove()
+            self._max_cover = None
+        if self._cover is not None:
+            self._cover.destroy()
+            self._cover = None
         for after_id in list(self._after_ids.values()) + ([self._toast_after] if self._toast_after else []):
             with contextlib.suppress(Exception):
                 self.after_cancel(after_id)

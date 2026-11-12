@@ -47,9 +47,9 @@ class SubjectsView(BaseView):
         self.list_width = app.pane_width("pane_subjects_list")      # preferred width (the divider position)
         self.table = theme.scrollable(columns, width=self.list_width - _SCROLLBAR_ROOM)
         self.table.grid(row=0, column=0, sticky="nsew")
-        self.divider = Divider(columns, get_width=lambda: self.list_width, on_apply=self.set_list_width,
+        self.divider = Divider(columns, get_width=lambda: self.list_width, on_apply=lambda w: app.apply_layout(lambda: (self.divider.hide_line(), self.set_list_width(w))),
                                on_commit=lambda w: app.save_pane("pane_subjects_list", w),
-                               on_reset=self._reset_list_width, minimum=config.COLUMN_MIN_WIDTH,
+                               on_reset=self._reset_list_width, minimum=lambda: config.COLUMN_MIN_WIDTH,
                                maximum=self._list_max_width)
         self.divider.grid(row=0, column=1, sticky="ns", padx=1)
         right = theme.scrollable(columns, width=config.COLUMN_MIN_WIDTH - _SCROLLBAR_ROOM)
@@ -144,7 +144,7 @@ class SubjectsView(BaseView):
             self.table.configure(width=width)
 
     def _reset_list_width(self) -> None:
-        self.set_list_width(config.SUBJECTS_LIST_DEFAULT_WIDTH)
+        self.app.apply_layout(lambda: self.set_list_width(config.SUBJECTS_LIST_DEFAULT_WIDTH))
         self.app.save_pane("pane_subjects_list", config.SUBJECTS_LIST_DEFAULT_WIDTH)
 
     # ------------------------------------------------------------ data

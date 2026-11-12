@@ -266,11 +266,28 @@ def label(master: object, text: str = "", size: int = config.UI_FONT_SIZE, weigh
     return ctk.CTkLabel(master, text=text, font=font(size, weight), text_color=color, **kwargs)  # type: ignore[arg-type]
 
 
+def no_nested_idle_flush(widget: Any) -> Any:
+    """CTkScrollbar and CTkOptionMenu end every redraw with ``self._canvas.update_idletasks()``: a full,
+    nested geometry-and-paint pass of the whole window. A scrollbar is redrawn on every size change of
+    its list, so during a relayout these nested passes paint half-finished layouts (broken frames) and
+    cost most of the time. Their canvases redraw at the next idle point anyway, so the call is dropped."""
+    canvas = getattr(widget, "_canvas", None)
+    if canvas is not None:
+        canvas.update_idletasks = _no_op
+    return widget
+
+
+def _no_op() -> None:
+    return None
+
+
 def scrollable(master: object, **kwargs: object) -> ctk.CTkScrollableFrame:
     options: dict[str, object] = {"fg_color": "transparent", "scrollbar_button_color": SCROLLBAR,
                                   "scrollbar_button_hover_color": SCROLLBAR_HOVER}
     options.update(kwargs)
-    return ctk.CTkScrollableFrame(master, **options)  # type: ignore[arg-type]
+    frame = ctk.CTkScrollableFrame(master, **options)  # type: ignore[arg-type]
+    no_nested_idle_flush(frame._scrollbar)  # noqa: SLF001
+    return frame
 
 
 def autowrap(widget: ctk.CTkLabel, container: Any, inset: int, minimum: int = 120) -> None:

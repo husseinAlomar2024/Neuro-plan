@@ -26,7 +26,7 @@ _COLOR_ATTRS = ("fg_color", "bg_color", "border_color", "text_color", "hover_col
 
 def _new_app(repo: Repository) -> Any:
     app = make_app(repo)
-    app.geometry("1280x800")
+    app.geometry("1500x800")                 # room for the coach panel to grow (centre minimum 710)
     pump(app, 0.3)
     return app
 
@@ -332,19 +332,21 @@ def test_drag_moves_only_a_ghost_line_and_resizes_once_on_release(app: Any, seed
         divider._motion(SimpleNamespace(x_root=1000 - round(i * 2 * scale)))
         app.update()
         xs.append(divider.ghost_x())
-        assert divider.ghost.winfo_ismapped(), "the ghost line follows the mouse"
+        assert divider.ghost_x() is not None, "the ghost line follows the mouse"
         assert panel.width == width0 and int(panel.cget("width")) == shown0, "no resize while dragging"
         assert bubble.cget("wraplength") == wrap0 and panel._area == area0
     assert xs == sorted(xs, reverse=True) and xs[0] > xs[-1] >= 0
     assert panel.messages._parent_canvas.winfo_width() == canvas_width0
     assert not applied and not rewraps and not wraps
     divider._release(SimpleNamespace())
-    assert not divider.ghost.winfo_ismapped()
-    pump(app, 0.5)
+    # applied synchronously, in one pass: width, re-wrap and scroll are final when the release returns
+    assert divider.ghost_x() is None
     assert applied == [width0 + 100], "the width is applied once, on release"
     assert panel.width == width0 + 100 and seeded.get_setting("pane_coach_width") == str(width0 + 100)
-    assert len(rewraps) == 1 and len(wraps) == 1, "the texts re-wrap exactly once"
+    assert len(rewraps) == 1 and len(wraps) == 1, "the texts re-wrap exactly once, in the same pass"
     assert bubble.cget("wraplength") > wrap0
+    pump(app, 0.5)
+    assert len(rewraps) == 1 and len(wraps) == 1, "no delayed second pass"
 
     # the line stops at the limit instead of following the mouse past it
     divider.press(1000)
@@ -375,3 +377,120 @@ def test_window_resize_fits_panes_once_after_the_burst(app: Any) -> None:
     assert app._fit_panes.runs == runs + 1 and app.panel._rewrap_later.runs <= rewraps + 1
     assert all(t.winfo_exists() for t in texts), "resizing reconfigures widgets, it never rebuilds them"
     assert [n for n, v in app.views.items() if v.winfo_ismapped()] == [app.current]
+
+
+def test_escape_and_focus_loss_cancel_a_drag(app: Any) -> None:
+    app.deiconify()
+    pump(app, 0.3)
+    divider, width = app.coach_divider, app.panel.width
+    divider.press(1000)
+    divider.drag_to(900)
+    assert divider.ghost_x() is not None
+    app.cancel_drags()                                      # what <Escape> and <Deactivate> call
+    assert divider.ghost_x() is None and not divider.dragging
+    divider.release()                                       # the button-up after a cancel does nothing
+    assert app.panel.width == width
+    divider.press(1000)
+    divider.drag_to(950)
+    app.event_generate("<Escape>")
+    pump(app, 0.1)
+    assert not divider.dragging and app.panel.width == width
+
+
+# ---------------------------------------------------------------- chat scroll after width changes (D)
+def _visible_holders(panel: Any) -> list[int]:
+    canvas = panel.messages._parent_canvas
+    top, height = canvas.winfo_rooty(), canvas.winfo_height()
+    return [i for i, w in enumerate(panel.messages.winfo_children())
+            if w.winfo_rooty() - top < height and w.winfo_rooty() - top + w.winfo_height() > 0]
+
+
+def _add_chat(panel: Any) -> None:
+    long = "A long coach answer that wraps over several lines and gets much shorter in a wide panel. " * 3
+    for i in range(12):
+        panel.add_message(ChatMessage(9400 + i, "", "coach" if i % 2 else "user", long if i % 3 == 0 else "ok"))
+
+
+def _drag_coach_to(app: Any, width: int) -> None:
+    divider = app.coach_divider
+    divider.press(1000)
+    divider.drag_to(1000 - round((width - app.panel.width) * app._scale()))
+    divider.release()
+
+
+def test_chat_keeps_its_bottom_and_is_never_blank_after_min_max_min(app: Any) -> None:
+    app.deiconify()
+    panel = app.panel
+    _add_chat(panel)
+    pump(app, 0.4)
+    last = len(panel.messages.winfo_children()) - 1
+    for width in (config.COACH_MIN_WIDTH, 4000, config.COACH_MIN_WIDTH, 4000):
+        _drag_coach_to(app, width)
+        visible = _visible_holders(panel)
+        assert visible, f"the message list is blank at width {panel.width}"
+        assert visible[-1] == last and panel.messages._parent_canvas.yview()[1] >= 0.999, "bottom stays bottom"
+    assert panel.width == app._coach_max_width()
+
+
+def test_chat_keeps_the_message_at_the_top_edge(app: Any) -> None:
+    app.deiconify()
+    panel = app.panel
+    _add_chat(panel)
+    pump(app, 0.4)
+    _drag_coach_to(app, config.COACH_MIN_WIDTH)
+    canvas = panel.messages._parent_canvas
+    children = panel.messages.winfo_children()
+    canvas.yview_moveto(children[2].winfo_y() / canvas.bbox("all")[3])     # message 2 at the top edge
+    app.update()
+    assert _visible_holders(panel)[0] == 2
+    for width in (4000, config.COACH_MIN_WIDTH + 40):
+        _drag_coach_to(app, width)
+        visible = _visible_holders(panel)
+        assert visible and visible[0] == 2, (width, visible)
+        assert abs(children[2].winfo_rooty() - canvas.winfo_rooty()) <= 2
+    # near the end, a wider panel makes the content shorter: the view is clamped to the end, not blank
+    canvas.yview_moveto(children[9].winfo_y() / canvas.bbox("all")[3])
+    app.update()
+    _drag_coach_to(app, 4000)
+    visible = _visible_holders(panel)
+    assert visible and visible[-1] == len(children) - 1 and canvas.yview()[1] >= 0.999
+    # content shorter than the view: clamped to the top instead of showing empty space
+    for child in children[1:]:
+        child.destroy()
+    app.apply_layout(lambda: app.panel.set_width(config.COACH_MIN_WIDTH))
+    assert _visible_holders(panel) == [0] and canvas.yview()[0] == 0.0
+
+
+# ---------------------------------------------------------------- limits (F)
+def test_pane_limits_keep_the_centre_view_unclipped(app: Any) -> None:
+    from neuroplan.ui import fonts, theme
+    from tools.centre_min import clipped
+    app.deiconify()
+    pump(app, 0.3)
+    assert config.CENTRE_MIN_WIDTHS == {"Small": 670, "Medium": 710, "Large": 740}
+    window = round(app.winfo_width() / app._scale())
+    assert app.centre_min_width() == 710
+    assert app._coach_max_width() == window - theme.SIDEBAR_WIDTH - config.DIVIDER_WIDTH - 710
+    assert app.window_min_width() == theme.SIDEBAR_WIDTH + config.DIVIDER_WIDTH + config.COACH_MIN_WIDTH + 710
+    assert abs(app.wm_minsize()[0] - app.window_min_width() * app._scale()) <= 1
+    # the ghost line stops at the centre's minimum, and that is where the pane ends up
+    divider = app.coach_divider
+    divider.press(1000)
+    assert divider.drag_to(1000 - 4000) == app._coach_max_width()
+    limit = divider.ghost_x()
+    divider.drag_to(1000 - 6000)
+    assert divider.ghost_x() == limit
+    divider.release()
+    assert app.panel.width == app._coach_max_width()
+    assert abs(round(app.centre.winfo_width() / app._scale()) - 710) <= 1
+    assert clipped(app.views["Today"]) == [], "every Today card is whole at the minimum centre width"
+    # a smaller window: the coach panel gives way first, the centre keeps its minimum
+    app.geometry(f"{app.window_min_width() + 40}x800")
+    pump(app, until=lambda: not app._fit_panes.pending)
+    pump(app, 0.2)
+    assert int(app.panel.cget("width")) == app._coach_max_width() < app.panel.width   # preference kept
+    assert round(app.centre.winfo_width() / app._scale()) >= 709
+    # a larger text size needs a wider centre view
+    app.set_text_size("Large", store=False)
+    assert app.centre_min_width() == 740 and fonts.text_size() == "Large"
+    assert abs(app.wm_minsize()[0] - app.window_min_width() * app._scale()) <= 1

@@ -96,7 +96,11 @@ DIVIDER_WIDTH = 6
 COACH_DEFAULT_WIDTH = 380
 COACH_MIN_WIDTH = 300
 COLUMN_MIN_WIDTH = 280         # any column next to a divider
-CENTRE_MIN_WIDTH = 400         # the coach divider never squeezes the centre view below this
+# The centre view never gets narrower than this (per text size). Measured with tools/centre_min.py: the
+# smallest width at which the Today cards show all four block buttons and unclipped text (661 / 701 / 730),
+# rounded up. The coach divider is clamped to it and the window's minimum width follows from it.
+CENTRE_MIN_WIDTHS = {"Small": 670, "Medium": 710, "Large": 740}
+WINDOW_MIN_HEIGHT = 700
 SUBJECTS_LIST_DEFAULT_WIDTH = 420
 PANE_MAX_WIDTH = 4000
 RESIZE_DEBOUNCE_MS = 80        # re-wrap / re-fit once, this long after the last <Configure> of a resize
