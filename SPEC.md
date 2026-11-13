@@ -7,7 +7,7 @@ A Windows desktop study planner with an **always-on LLM study coach** that plans
 ## 0. Core architecture (read this first)
 
 ```
-            ┌──────────────────────── GUI (CustomTkinter) ────────────────────────┐
+            ┌──────────────────────── GUI (Qt / PySide6) ─────────────────────────┐
             │ Today | Week | Subjects | Reviews | Settings      ║  Coach panel   │
             └───────────────┬─────────────────────────────────────╨───────┬───────┘
                             │ user actions                                │ chat + proactive msgs
@@ -29,13 +29,13 @@ Non-negotiable rules:
 1. **The LLM never computes the schedule and never writes to the DB directly.** It calls tools. The `Scheduler` is deterministic and pure (input state + date → plan + risk report). The LLM's job: understand the student, gather missing info, choose/adjust inputs, explain results, negotiate trade-offs, react to events.
 2. **GUI buttons and the chat go through the same `ToolExecutor`.** One code path for every state change. Every executed tool writes to `action_log` and is undoable.
 3. **The coach is live.** It reacts to events (Section 6) without being asked. Offline mode keeps the app fully usable with no API key.
-4. **The UI never blocks.** All LLM/network calls run on a worker thread; results are marshalled to the UI with `widget.after(...)`.
+4. **The UI never blocks.** All LLM/network calls run on a worker thread; results are marshalled to the UI through the `Dispatcher` (`neuroplan/dispatch.py`; in Qt a queued signal).
 
 ---
 
 ## 1. Stack & layout
 
-- Python 3.11+, `customtkinter`, `sqlite3`, `anthropic`, `openai` (for OpenAI-compatible endpoints: OpenAI, DeepSeek, Ollama), `keyring`, `python-dateutil`. Dev: `pytest`, `pyinstaller`. Nothing else.
+- Python 3.11+, `PySide6-Essentials` (Qt Widgets), `sqlite3`, `anthropic`, `openai` (for OpenAI-compatible endpoints: OpenAI, DeepSeek, Ollama), `keyring`, `python-dateutil`. Dev: `pytest`, `pytest-qt`, `pyinstaller`. Nothing else. (Changed from CustomTkinter to Qt on 2026-11-13 by the user's decision; see DECISIONS.md.)
 - Timezone: use local system time. Default week display starts **Sunday** (setting `week_start`: `sun`|`mon`).
 
 ```
@@ -59,7 +59,10 @@ neuroplan/
     coach/prompts.py           # system prompt + state snapshot builder
     events.py                  # simple in-process pub/sub
     timer.py                   # pomodoro state machine (no UI code)
-    ui/app.py, ui/theme.py, ui/views/{today,week,subjects,reviews,settings}.py, ui/coach_panel.py, ui/widgets/*.py
+    dispatch.py                # UI-agnostic Dispatcher (worker thread → UI thread)
+    palette.py                 # colour tokens of the three themes
+    ui_qt/app.py, ui_qt/style.py, ui_qt/widgets.py, ui_qt/chat.py, ui_qt/coach_panel.py,
+    ui_qt/views/{today,pomodoro,week,subjects,reviews,settings}.py
     seed.py
   tests/  (pytest)
   requirements.txt  requirements-dev.txt  build_exe.bat  README.md  DECISIONS.md  PROGRESS.md
@@ -206,7 +209,7 @@ Store all messages. Send last 12 to the LLM; when more than 30 unsummarised exis
 
 ---
 
-## 7. GUI (CustomTkinter, 1280×800 default, min 1024×700, Dark default)
+## 7. GUI (Qt Widgets via PySide6, 1280×800 default, min 1024×700, Midnight default)
 
 Left sidebar nav · centre view · right **Coach panel** (always visible, collapsible to an icon with unread badge, width ~380 px).
 
@@ -271,4 +274,4 @@ Coach panel: message bubbles (user / coach / system-event styles), "Actions exec
 P1 schema, repository, models, seed + tests → P2 scheduler + feasibility + tests → P3 tool registry/executor/undo + tests → P4 offline engine + tests → P5 providers, LLM engine, coach, events + FakeProvider tests → P6 GUI views + coach panel + timer → P7 proactive events wiring → P8 polish, README, build_exe.bat, full test run, `pyinstaller` dry run.
 
 ## 11. Deliverables
-Runnable `python main.py`; all tests green; `README.md` with setup (venv, `pip install -r requirements.txt`, set API key in Settings), run, test, and build commands; `build_exe.bat` producing `dist/NeuroPlan.exe` (`--noconsole --onefile`, include customtkinter data files); `DECISIONS.md` listing every choice not covered by this spec.
+Runnable `python main.py`; all tests green; `README.md` with setup (venv, `pip install -r requirements.txt`, set API key in Settings), run, test, and build commands; `build_exe.bat` producing `dist/NeuroPlan/` (`--noconsole --onedir`, unused Qt modules excluded) and installing it to `%LOCALAPPDATA%\NeuroPlan\app`; `DECISIONS.md` listing every choice not covered by this spec.

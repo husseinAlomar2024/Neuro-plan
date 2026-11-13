@@ -25,29 +25,25 @@ def setup_logging() -> None:
 
 def ask_recreate(path: Path) -> bool:
     """The database file is corrupted: ask before renaming it to .bak and starting fresh."""
-    import tkinter
-    from tkinter import messagebox
+    from PySide6.QtWidgets import QMessageBox
 
-    root = tkinter.Tk()
-    root.withdraw()
-    try:
-        return bool(messagebox.askyesno(
-            config.APP_NAME,
-            f"The data file is damaged and cannot be opened:\n{path}\n\n"
-            f"Rename it to {path.name}.bak and start with a fresh database?"))
-    finally:
-        root.destroy()
+    from neuroplan.ui_qt.app import ensure_app
+    ensure_app()
+    answer = QMessageBox.question(
+        None, config.APP_NAME,
+        f"The data file is damaged and cannot be opened:\n{path}\n\n"
+        f"Rename it to {path.name}.bak and start with a fresh database?")
+    return answer == QMessageBox.StandardButton.Yes
 
 
 def main() -> int:
-    from neuroplan.ui.dpi import enable_dpi_awareness
-    enable_dpi_awareness()          # before any Tk window, also in the exe (see neuroplan/ui/dpi.py)
-    setup_logging()
+    setup_logging()                 # Qt makes the process per-monitor DPI aware itself
     log = logging.getLogger("neuroplan")
     from neuroplan.db.repository import open_database
     from neuroplan.seed import seed_if_first_launch
-    from neuroplan.ui.app import NeuroPlanApp
+    from neuroplan.ui_qt.app import MainWindow, ensure_app
 
+    app = ensure_app()
     if config.is_frozen():
         try:
             moved = config.migrate_legacy_db(config.install_dir(), config.app_dir())
@@ -62,14 +58,16 @@ def main() -> int:
         return 1
     try:
         seed_if_first_launch(repo, date.today())
-        app = NeuroPlanApp(repo)
-        app.mainloop()
+        window = MainWindow(repo)
+        window.show()
+        code = app.exec()
+        window.shutdown()
+        return int(code)
     except Exception:
         log.exception("fatal error")
         raise
     finally:
         repo.close()
-    return 0
 
 
 if __name__ == "__main__":
