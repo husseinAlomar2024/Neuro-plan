@@ -24,6 +24,7 @@ SOURCES = ("ui", "chat_llm", "chat_offline", "system")
 _WEEKDAY_LOOKUP = {name: i for i, name in enumerate(config.WEEKDAY_NAMES)}
 _WEEKDAY_LOOKUP.update({name.lower(): i for i, name in enumerate(config.WEEKDAY_LONG)})
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_BLOB_RE = re.compile(r"^[A-Za-z0-9+/=]*$")
 ONBOARDING_FIELDS = ("units", "expected", "assessment")
 
 
@@ -495,6 +496,8 @@ class ToolExecutor:
         values["theme"] = config.normalize_theme(values["theme"])
         for key, default in config.PANE_SETTINGS.items():
             values[key] = stored.get(key, str(default))
+        for key in config.UI_PREF_BLOBS:
+            values[key] = stored.get(key, "")
         return "settings", values
 
     def _t_set_ui_prefs(self, a: dict[str, Any]) -> tuple[str, Any]:
@@ -507,6 +510,11 @@ class ToolExecutor:
             if key == "theme":
                 value = config.LEGACY_THEMES.get(value, value)
             allowed = config.UI_PREFS[key]
+            if key in config.UI_PREF_BLOBS:
+                if len(value) > config.UI_PREF_BLOB_MAX or not _BLOB_RE.match(value):
+                    raise ToolError(f"set_ui_prefs: '{key}' must be base64 text")
+                clean[key] = value
+                continue
             if allowed is not None and value not in allowed:
                 raise ToolError(f"set_ui_prefs: '{key}' must be one of {', '.join(allowed)} (got {value!r})")
             if allowed is None and not (value.isdigit() and 0 < int(value) <= config.PANE_MAX_WIDTH):

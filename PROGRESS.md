@@ -1,7 +1,12 @@
 # PROGRESS
 
 ## Current phase
-All phases of SPEC.md §10 (P1–P8) are complete.
+Qt rewrite on branch `qt-ui` (user decision 2026-11-13, see DECISIONS "Qt front end"). Phases Q1–Q7:
+- Q1 shell (dispatcher, palette, stylesheet, splitter, persistence) — done
+- Q2 coach panel and message list — done
+- Q3 Today + Pomodoro — next
+- Q4 Subjects + Reviews, Q5 Week + Settings, Q6 tools/ui_check.py + visual fixes + performance, Q7 packaging (onedir), switch main.py, remove the Tk UI, update README/SPEC/CLAUDE.md
+Qt code lives in `neuroplan/ui_qt/`; tests `tests/test_qt_*.py` (pytest-qt, offscreen). The old Tk UI (`neuroplan/ui/`) stays until Q7.
 
 ## Done
 - P1: `config.py`, `models.py`, `db/schema.sql`, `db/repository.py`, `seed.py`, `tests/test_repository.py`.

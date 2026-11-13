@@ -103,6 +103,7 @@ CENTRE_MIN_WIDTHS = {"Small": 670, "Medium": 710, "Large": 740}
 WINDOW_MIN_HEIGHT = 700
 SUBJECTS_LIST_DEFAULT_WIDTH = 420
 PANE_MAX_WIDTH = 4000
+CHAT_HISTORY_LIMIT = 500       # Qt chat: messages loaded at start (model/view, only visible rows are painted)
 CHAT_RENDERED = 40             # chat messages rendered at start; older ones load when scrolled to the top
 CHAT_LOAD_MORE = 20            # how many older messages each load adds
 RESIZE_DEBOUNCE_MS = 80        # re-wrap / re-fit once, this long after the last <Configure> of a resize
@@ -111,6 +112,10 @@ PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": 
 # preferences the UI stores directly through set_ui_prefs (not undoable, no plan effect)
 UI_PREFS: dict[str, tuple[str, ...] | None] = {"theme": THEME_NAMES, "text_size": TEXT_SIZE_NAMES,
                                                **{key: None for key in PANE_SETTINGS}}
+# saved Qt layout state (QSplitter.saveState / QWidget.saveGeometry), stored as base64 text
+UI_PREF_BLOBS = ("window_geometry", "splitter_main", "splitter_subjects")
+UI_PREF_BLOB_MAX = 8000
+UI_PREFS.update({key: () for key in UI_PREF_BLOBS})
 PROACTIVE_LEVELS = ("off", "light", "full")
 # Settings the UI / tools may change, with their allowed values (None = free text / validated in code)
 EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
