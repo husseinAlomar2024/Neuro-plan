@@ -23,6 +23,9 @@ def make_window(repo: Repository, qtbot: Any, show: bool = True) -> Any:
 def close_window(window: Any) -> None:
     window._close_asked = True          # skip the end-of-day check-in on close
     window.close()
+    worker = window.coach._worker       # let a running coach task finish before the database closes
+    if worker is not None:
+        worker.join(5)
 
 
 @pytest.fixture

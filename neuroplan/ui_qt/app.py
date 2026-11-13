@@ -110,6 +110,8 @@ class MainWindow(QMainWindow):
         centre_layout.setSpacing(0)
         self.stack = QStackedWidget()
         centre_layout.addWidget(self.stack, 1)
+        self._toast_timer = QTimer(self, singleShot=True, interval=6000,
+                                   timeout=lambda: self.toast_label.setText(""))
         self.toast_label = label("", "muted")
         self.toast_label.setContentsMargins(18, 0, 18, 6)
         self.toast_label.setMinimumWidth(10)
@@ -331,7 +333,7 @@ class MainWindow(QMainWindow):
     def toast(self, text: str, error: bool = False) -> None:
         self.toast_label.setText(text)
         set_prop(self.toast_label, "toast", "error" if error else "")
-        QTimer.singleShot(6000, lambda t=text: self.toast_label.text() == t and self.toast_label.setText(""))
+        self._toast_timer.start()
 
     def post_ui(self, fn: Callable[[], None]) -> None:
         """Thread-safe: run ``fn`` on the GUI thread."""

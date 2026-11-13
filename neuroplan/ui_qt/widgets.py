@@ -12,6 +12,12 @@ from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QHBoxLayout, QLabe
 from .style import LOOK
 
 
+def _subject_color(color: str) -> QColor:
+    """A subject's colour, or the muted text colour when it is not a valid colour."""
+    value = QColor.fromString(color) if color else QColor()
+    return value if value.isValid() else QColor(LOOK.colors["text_muted"])
+
+
 def label(text: str = "", role: Optional[str] = None, tone: Optional[str] = None, wrap: bool = False,
           selectable: bool = False) -> QLabel:
     widget = QLabel(text)
@@ -83,7 +89,7 @@ class Dot(QWidget):
 
     def __init__(self, color: str, size: int = 10, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._color = QColor(color) if QColor.isValidColor(color) else QColor(LOOK.colors["text_muted"])
+        self._color = _subject_color(color)
         self.setFixedSize(size, size)
 
     def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
@@ -273,3 +279,20 @@ class FlowLayout(QLayout):
             x += hint.width() + self._spacing
             line_h = max(line_h, hint.height())
         return y + line_h
+
+
+class ColorBar(QWidget):
+    """The thin vertical subject-colour bar at the left of a timeline row."""
+
+    def __init__(self, color: str, width: int = 5) -> None:
+        super().__init__()
+        self._color = _subject_color(color)
+        self.setFixedWidth(width)
+        self.setMinimumHeight(24)
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._color)
+        painter.drawRoundedRect(self.rect(), 2.5, 2.5)
