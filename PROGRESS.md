@@ -7,7 +7,13 @@ Qt rewrite on branch `qt-ui` (user decision 2026-11-13, see DECISIONS "Qt front 
 - Q3 Today + Pomodoro — done
 - Q4 Subjects + Reviews — done
 - Q5 Week + Settings — done
-- Q6 ui_check + visual fixes + performance — next
+- Q6 ui_check + visual fixes + performance — in progress. Done so far: tools/ui_check.py (on-screen timing + PNGs),
+  tools/profile_qt.py; stylesheet replaced by Fusion + palette + painted primitives (2x faster paint); button
+  rendering cached as pixmaps; chat refinement waits for a pause; every view fits 1024x700 in every theme and text
+  size (tests/test_qt_layout.py). Measured (busy machine, ~25 % background CPU): coach splitter drag median
+  ~27 ms, window resize ~35-45 ms; an EMPTY Qt window already needs ~14 ms per resize pass and ~6 ms per splitter
+  pass here. Next: replace the QListView chat with a custom virtual list (QListView calls the Python delegate
+  for every row on each layout, ~5-12 ms per pass), re-measure, look at the PNGs again.
 - Q4 Subjects + Reviews, Q5 Week + Settings, Q6 tools/ui_check.py + visual fixes + performance, Q7 packaging (onedir), switch main.py, remove the Tk UI, update README/SPEC/CLAUDE.md
 Qt code lives in `neuroplan/ui_qt/`; tests `tests/test_qt_*.py` (pytest-qt, offscreen). The old Tk UI (`neuroplan/ui/`) stays until Q7.
 

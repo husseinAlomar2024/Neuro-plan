@@ -22,7 +22,7 @@ from ..models import ToolResult
 from ..timer import PomodoroTimer
 from ..tools.executor import ToolExecutor
 from .coach_panel import CoachPanel
-from .style import LOOK, set_prop
+from .style import LOOK, set_bg, set_prop
 from .views import BaseView
 from .views.reviews import ReviewsView
 from .views.settings import SettingsView
@@ -36,6 +36,7 @@ VIEW_NAMES = ["Today", "Week", "Subjects", "Reviews", "Settings"]
 _VIEW_CLASSES: dict[str, type[BaseView]] = {"Today": TodayView, "Week": WeekView, "Subjects": SubjectsView,
                                             "Reviews": ReviewsView, "Settings": SettingsView}
 SIDEBAR_WIDTH = 168
+MIN_WINDOW = (1024, 700)     # SPEC §7; grows with the text size when the content needs more
 SAVE_DELAY_MS = 400          # layout state is saved this long after the last splitter move / window resize
 
 
@@ -80,7 +81,6 @@ class MainWindow(QMainWindow):
         if config.icon_path().is_file():
             from PySide6.QtGui import QIcon
             self.setWindowIcon(QIcon(str(config.icon_path())))
-        self.setMinimumSize(1024, 700)
 
         self.today = today_fn
         self._day = today_fn()
@@ -98,13 +98,16 @@ class MainWindow(QMainWindow):
 
         # ---- layout: sidebar | splitter(centre stack | coach panel)
         root = QWidget()
+        # the floor of the window size; the layout raises the window's minimum further on its own when the
+        # content needs more (larger text), so nothing is ever clipped
+        root.setMinimumSize(*MIN_WINDOW)
         outer = QHBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self._build_sidebar())
         self.splitter = Splitter()
         self.centre = QWidget()
-        self.centre.setObjectName("centre")
+        set_bg(self.centre, "bg")
         centre_layout = QVBoxLayout(self.centre)
         centre_layout.setContentsMargins(0, 0, 0, 0)
         centre_layout.setSpacing(0)
@@ -147,13 +150,14 @@ class MainWindow(QMainWindow):
         self._tick_timer.start()
         self._minute_timer = QTimer(self, interval=60_000, timeout=self._minute)
         self._minute_timer.start()
+        self.panel.input.setFocus()              # typing goes to the coach; no focus ring on the nav at start
         if run_startup:
             QTimer.singleShot(250, self._startup)
 
     # ------------------------------------------------------------ layout
     def _build_sidebar(self) -> QWidget:
         bar = QWidget()
-        bar.setObjectName("sidebar")
+        set_bg(bar, "sidebar")
         bar.setFixedWidth(SIDEBAR_WIDTH)
         layout = QVBoxLayout(bar)
         layout.setContentsMargins(10, 18, 10, 12)
@@ -233,6 +237,8 @@ class MainWindow(QMainWindow):
             view.loaded = False          # entering Settings always shows the stored values
         self._refresh_view(view)
         self.mode_label.setText(self.coach.status_text())
+        if self.isVisible():
+            self.refit_splitters()                           # its minimum width counts once it is laid out
 
     def _refresh_view(self, view: BaseView) -> None:
         try:
@@ -284,6 +290,20 @@ class MainWindow(QMainWindow):
         self.panel.look_changed()
         for view in self.views.values():
             view.look_changed()
+        self.refit_splitters()
+
+    def refit_splitters(self) -> None:
+        """Minimum widths may have changed (text size, a view shown for the first time): recompute the
+        layouts, widen the window if it is now too narrow, and let every splitter re-apply the minimums."""
+        for widget in (self.stack.currentWidget(), self.centralWidget()):
+            if widget is not None and widget.layout() is not None:
+                widget.layout().invalidate()
+                widget.layout().activate()
+        need = self.minimumSizeHint().width()
+        if self.width() < need and not self.isMaximized():
+            self.resize(need, self.height())
+        for splitter in self.findChildren(Splitter):
+            splitter.setSizes(splitter.sizes())
 
     # ------------------------------------------------------------ services for views
     def call(self, tool: str, args: Optional[dict[str, Any]] = None) -> ToolResult:
@@ -332,7 +352,7 @@ class MainWindow(QMainWindow):
 
     def toast(self, text: str, error: bool = False) -> None:
         self.toast_label.setText(text)
-        set_prop(self.toast_label, "toast", "error" if error else "")
+        set_prop(self.toast_label, "tone", "danger" if error else "muted")
         self._toast_timer.start()
 
     def post_ui(self, fn: Callable[[], None]) -> None:

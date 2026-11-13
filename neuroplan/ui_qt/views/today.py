@@ -100,15 +100,12 @@ class TodayView(BaseView):
         layout.addWidget(time_label, 0, Qt.AlignmentFlag.AlignVCenter)
         body = QVBoxLayout()
         body.setSpacing(3)
-        top = QHBoxLayout()
-        top.setSpacing(10)
-        top.addWidget(Chip(b["subject"], b["color"], 13), 0)
+        body.addWidget(Chip(b["subject"], b["color"], 13))
         category = "Review" if b["type"] == "REVIEW" else b["category"].capitalize()
         meta = f"{category} · {b['pomodoro']} · {TYPE_LABEL.get(b['type'], b['type'])} · {b['min']} min"
         if b["locked"]:
             meta += " · locked"
-        top.addWidget(label(meta, "small", wrap=True), 1)
-        body.addLayout(top)
+        body.addWidget(label(meta, "small", wrap=True))
         body.addWidget(label(b["task"], None if pending else "muted", wrap=True))
         layout.addLayout(body, 1)
         buttons: dict[str, Any] = {}

@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QListView, QPushButton, QStyle
                                QStyleOptionViewItem, QWidget)
 
 from ..models import ChatMessage
-from .style import LOOK
+from .style import LOOK, set_bg
+from .widgets import Button
 
 # geometry (logical px, before text scaling)
 OUTER_X, OUTER_Y = 6, 4           # around every row
@@ -31,8 +32,9 @@ SIDE = 28                         # free space on the other side of a bubble
 PAD_X, PAD_Y = 12, 8              # inside a bubble
 GAP = 6                           # between sections inside a bubble
 LINE_FACTOR = 1.18                # bubble text line spacing (looser than a plain label)
-REFINE_BATCH = 60                 # rows measured per idle step after a width change
-NEAR_ROWS = 12                    # rows around the viewport measured at once on a width change
+REFINE_BATCH = 12                 # rows measured per idle step after a width change (a few ms)
+REFINE_DELAY_MS = 120             # the refinement starts once the width has not changed for this long
+NEAR_ROWS = 2                     # rows around the viewport measured at once on a width change
 
 
 def is_rtl(text: str) -> bool:
@@ -427,20 +429,17 @@ class MessageWidget(QWidget):
         self._layout = layout
         for n, element in enumerate(layout.elements):
             if element.kind == "undo":
-                btn = QPushButton("Undo", self)
-                btn.setProperty("kind", "link")
+                btn = Button("Undo", self, kind="link")
                 btn.setToolTip("Undo the last change")
                 btn.clicked.connect(lambda: self.on_action(self.item, "undo", None))
             elif element.kind == "confirm" and self.item.live:
-                btn = QPushButton("Confirm", self)
-                btn.setProperty("kind", "primary")
+                btn = Button("Confirm", self, kind="primary")
                 btn.clicked.connect(lambda _=False, c=element.data: self.on_action(self.item, "confirm", c))
             elif element.kind == "cancel" and self.item.live:
-                btn = QPushButton("Cancel", self)
+                btn = Button("Cancel", self)
                 btn.clicked.connect(lambda _=False, c=element.data: self.on_action(self.item, "cancel", c))
             elif element.kind == "option" and self.item.live:
-                btn = QPushButton(str(element.data.get("label", "")), self)
-                btn.setProperty("kind", "option")
+                btn = Button(str(element.data.get("label", "")), self, kind="option")
                 btn.clicked.connect(lambda _=False, o=element.data: self.on_action(self.item, "option", o))
             else:
                 continue
@@ -478,7 +477,7 @@ class MessageWidget(QWidget):
 class ChatView(QListView):
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("messages")
+        set_bg(self, "bg")
         self.chat_model = ChatModel()
         self.setModel(self.chat_model)
         self.delegate = ChatDelegate(self)
@@ -490,7 +489,8 @@ class ChatView(QListView):
         self.setUniformItemSizes(False)
         self.setMouseTracking(False)
         self.verticalScrollBar().setSingleStep(24)
-        self._refine = QTimer(self, singleShot=True, interval=0, timeout=self._refine_step)
+        # measuring off-screen rows waits until a resize pauses, then runs in small idle batches
+        self._refine = QTimer(self, singleShot=True, interval=REFINE_DELAY_MS, timeout=self._refine_step)
 
     # ------------------------------------------------------------ anchor
     def at_bottom(self) -> bool:
@@ -534,7 +534,7 @@ class ChatView(QListView):
         self.delegate.exact_rows = None
         self.restore(anchor)
         if self.delegate.stale:
-            self._refine.start()
+            self._refine.start(REFINE_DELAY_MS)  # restarted by every width change: waits for a pause
 
     def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         anchor = self.anchor()
@@ -560,7 +560,7 @@ class ChatView(QListView):
         self.doItemsLayout()
         self.restore(anchor)
         if self.delegate.stale:
-            self._refine.start()
+            self._refine.start(0)            # next batch at the next idle moment
 
     def refresh_all(self) -> None:
         """Text size or theme changed: re-measure everything now."""

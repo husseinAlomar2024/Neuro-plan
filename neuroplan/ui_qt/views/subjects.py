@@ -6,11 +6,10 @@ import json
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import QByteArray, QDate, Qt, QTimer
-from PySide6.QtWidgets import (QCheckBox, QDateEdit, QFrame, QGridLayout, QHBoxLayout, QProgressBar, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import QCheckBox, QDateEdit, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 
 from ... import config
-from ..widgets import (Chip, Splitter, button, card, clear_layout, combo, field, label, line_edit, scroll_area,
+from ..widgets import (COLUMN_MIN_WIDTH, Bar, Card, Chip, Splitter, button, card, clear_layout, combo, field, label, line_edit, scroll_area,
                        spinbox)
 from . import BaseView
 from .today import backlog_tone
@@ -19,14 +18,13 @@ if TYPE_CHECKING:
     from ..app import MainWindow
 
 
-class SubjectCard(QFrame):
+class SubjectCard(Card):
     """One subject in the list; a click selects it."""
 
     def __init__(self, view: "SubjectsView", s: dict[str, Any], selected: bool) -> None:
-        super().__init__()
+        super().__init__("selected" if selected else "true")
         self.view = view
         self.name = s["name"]
-        self.setProperty("card", "selected" if selected else "true")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(f"Edit {s['name']}")
         layout = QVBoxLayout(self)
@@ -41,11 +39,7 @@ class SubjectCard(QFrame):
         bar_row.setSpacing(10)
         backlog = s["backlog_units"]
         tone = backlog_tone(backlog)
-        bar = QProgressBar()
-        bar.setTextVisible(False)
-        bar.setRange(0, 1000)
-        bar.setValue(1000 if backlog == 0 else int(1000 * min(1.0, backlog / max(1, s["expected_units_by_now"]))))
-        bar.setProperty("tone", tone)
+        bar = Bar(1.0 if backlog == 0 else min(1.0, backlog / max(1, s["expected_units_by_now"])), tone)
         bar_row.addWidget(bar, 1)
         bar_row.addWidget(label("on track" if backlog == 0 else f"{backlog} behind", "strong", tone))
         layout.addLayout(bar_row)
@@ -97,7 +91,7 @@ class SubjectsView(BaseView):
         self.list_layout.setSpacing(8)
         self.list_layout.addStretch(1)
         self.list_scroll = scroll_area(list_body)
-        self.list_scroll.setMinimumWidth(config.COLUMN_MIN_WIDTH)
+        self.list_scroll.floor = COLUMN_MIN_WIDTH  # type: ignore[attr-defined]
         self.splitter.addWidget(self.list_scroll)
         right_body = QWidget()
         right = QVBoxLayout(right_body)
@@ -107,7 +101,7 @@ class SubjectsView(BaseView):
         right.addWidget(self._build_assessments())
         right.addStretch(1)
         self.form_scroll = scroll_area(right_body)
-        self.form_scroll.setMinimumWidth(config.COLUMN_MIN_WIDTH)
+        self.form_scroll.floor = COLUMN_MIN_WIDTH  # type: ignore[attr-defined]
         self.splitter.addWidget(self.form_scroll)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
@@ -128,8 +122,10 @@ class SubjectsView(BaseView):
                 self.reset_splitter(save=False)
 
     def reset_splitter(self, save: bool = True) -> None:
-        total = max(sum(self.splitter.sizes()), 2 * config.COLUMN_MIN_WIDTH)
-        left = min(config.SUBJECTS_LIST_DEFAULT_WIDTH, total - config.COLUMN_MIN_WIDTH)
+        total = max(sum(self.splitter.sizes()), 2 * COLUMN_MIN_WIDTH)
+        right_min = max(COLUMN_MIN_WIDTH, self.form_scroll.minimumSizeHint().width())
+        left = max(self.list_scroll.minimumSizeHint().width(),
+                   min(config.SUBJECTS_LIST_DEFAULT_WIDTH, total - right_min))
         self.splitter.setSizes([left, total - left])
         if save:
             self._save_splitter()
@@ -204,11 +200,11 @@ class SubjectsView(BaseView):
         self.unit_to.setSpecialValueText("—")
         grid.addWidget(field("Kind", self.kind), 0, 0)
         grid.addWidget(field("Date", self.date), 0, 1)
-        grid.addWidget(field("Weight", self.weight), 0, 2)
         grid.addWidget(field("Title", self.assess_title_edit), 1, 0)
-        grid.addWidget(field("From unit", self.unit_from), 1, 1)
-        grid.addWidget(field("To unit", self.unit_to), 1, 2)
-        for col in range(3):
+        grid.addWidget(field("Weight", self.weight), 1, 1)
+        grid.addWidget(field("From unit", self.unit_from), 2, 0)
+        grid.addWidget(field("To unit", self.unit_to), 2, 1)
+        for col in range(2):
             grid.setColumnStretch(col, 1)
         layout.addLayout(grid)
         row = QHBoxLayout()

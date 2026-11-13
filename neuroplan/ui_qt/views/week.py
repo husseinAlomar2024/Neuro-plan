@@ -78,7 +78,7 @@ class WeekView(BaseView):
         self.header_row.addWidget(self.why_button)
 
         self.banner, banner_layout = card("banner", vertical=False, margins=(12, 8, 10, 8), spacing=10)
-        self.banner_text = label("", wrap=True)
+        self.banner_text = label("", "strong", "danger", wrap=True)
         banner_layout.addWidget(self.banner_text, 1)
         banner_layout.addWidget(button("See options", lambda: app.ask_coach("Am I on track?"),
                                        tooltip="Ask the coach for the options"))
@@ -113,7 +113,10 @@ class WeekView(BaseView):
         self.save_week_button = button("Save week", self._save_week, kind="primary",
                                        tooltip="Save the weekly availability; the plan is rebuilt")
         footer.addWidget(self.save_week_button)
-        footer.addSpacing(16)
+        footer.addStretch(1)
+        layout.addLayout(footer)
+        footer = QHBoxLayout()
+        footer.setSpacing(6)
         footer.addWidget(label("Today only:", "muted"))
         self.override = spinbox(120, step=15, maximum=config.MAX_DAY_MINUTES, suffix=" min")
         footer.addWidget(self.override)
@@ -171,16 +174,15 @@ class WeekView(BaseView):
         by_day = {d["weekday"]: d for d in data["days"]}
         for col, title in enumerate(("Day", "Minutes", "Start", "Peak")):
             self.grid.addWidget(label(title, "small"), 0, col)
-            self.grid.addWidget(label(title, "small"), 0, col + 5)
-        self.grid.setColumnMinimumWidth(4, 24)
+        self.grid.setColumnStretch(4, 1)
         for i, wd in enumerate(self._order()):
             d = by_day[wd]
-            base = 0 if i < 4 else 5
-            row = 1 + (i if i < 4 else i - 4)
+            base = 0
+            row = 1 + i
             self.grid.addWidget(label(config.WEEKDAY_LONG[wd], "strong"), row, base)
             spin = spinbox(d["minutes"], step=15, maximum=config.MAX_DAY_MINUTES)
             start = line_edit(d["start_time"], "HH:MM")
-            start.setMaximumWidth(80)
+            start.setFixedWidth(start.fontMetrics().horizontalAdvance("00:000") + 24)
             peak = combo(list(config.PEAK_WINDOWS), d["peak_window"])
             self.grid.addWidget(spin, row, base + 1)
             self.grid.addWidget(start, row, base + 2)
@@ -215,9 +217,10 @@ class WeekView(BaseView):
             d = date.fromisoformat(day["date"])
             is_today = d == today
             column, layout = card("today" if is_today else "alt", margins=(8, 8, 8, 8), spacing=4)
-            layout.addWidget(label(f"{day['weekday'][:3]} {d.day}", "strong", "accent" if is_today else None))
+            layout.addWidget(label(f"{day['weekday'][:3]} {d.day}", "strong", "accent" if is_today else None,
+                                   wrap=True))
             planned = sum(b["min"] for b in day["blocks"] if b["status"] != "skipped")
-            layout.addWidget(label(f"{planned} / {day['capacity_min']} min", "small"))
+            layout.addWidget(label(f"{planned} / {day['capacity_min']} min", "small", wrap=True))
             if not day["blocks"]:
                 layout.addWidget(label("—", "muted"))
             for b in day["blocks"]:

@@ -1,15 +1,16 @@
-"""Small shared Qt widgets and constructors. Styling comes from roles (see style.py), never colours."""
+"""Small shared Qt widgets and constructors. Styling comes from roles (see style.py), never colour literals.
+Buttons, cards, the splitter handle and the badge paint themselves from the theme tokens (fast, no
+stylesheets)."""
 from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit,
-                               QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QSplitterHandle,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
+                               QScrollArea, QSizePolicy, QSpinBox, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
-from .style import LOOK
+from .style import LOOK, restyle
 
 
 def _subject_color(color: str) -> QColor:
@@ -30,34 +31,160 @@ def label(text: str = "", role: Optional[str] = None, tone: Optional[str] = None
         widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
     if selectable:
         widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    restyle(widget)
     return widget
 
 
+# ---------------------------------------------------------------- buttons
+_BUTTON_FONT = {"primary": (13, True), "nav": (13, True), "chip": (11, False), "option": (12, True),
+                "link": (12, True), "icon": (13, False), "": (12, False)}
+_BUTTON_PAD = {"primary": (14, 6), "nav": (12, 8), "chip": (10, 3), "option": (12, 4), "link": (5, 2),
+               "icon": (6, 4), "": (12, 5)}
+_TONE_TEXT = {"danger": "danger", "accent": "accent_text", "success": "success", "warning": "warning",
+              "dangerline": "danger", "accentline": "accent_text"}
+_TONE_BORDER = {"success": "success", "warning": "warning", "dangerline": "danger", "accentline": "accent"}
+
+
+class Button(QPushButton):
+    """A flat button painted from the theme: hover, pressed, checked, focus and disabled states."""
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None, kind: str = "", tone: str = "") -> None:
+        super().__init__(text, parent)
+        self.setProperty("kind", kind)
+        self.setProperty("tone", tone)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cache: Optional[QPixmap] = None
+        self._cache_key: tuple = ()
+        self.restyle()
+
+    @property
+    def kind(self) -> str:
+        return str(self.property("kind") or "")
+
+    @property
+    def tone(self) -> str:
+        return str(self.property("tone") or "")
+
+    def restyle(self) -> None:
+        size, bold = _BUTTON_FONT.get(self.kind, _BUTTON_FONT[""])
+        self.setFont(LOOK.font(size, bold))
+        self.updateGeometry()
+        self.update()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        metrics = QFontMetrics(self.font())
+        pad_x, pad_y = _BUTTON_PAD.get(self.kind, _BUTTON_PAD[""])
+        width = metrics.horizontalAdvance(self.text()) + 2 * pad_x + 2
+        height = metrics.height() + 2 * pad_y + 2
+        if self.kind == "icon":
+            width = max(width, height)
+        return QSize(width, height)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        return self.sizeHint()
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        # the rendering is cached: during a resize most buttons keep their size and state, so a paint is
+        # one pixmap copy instead of a Python-drawn button
+        ratio = self.devicePixelRatioF()
+        key = (self.width(), self.height(), ratio, self.text(), self.kind, self.tone, self.isEnabled(),
+               self.underMouse(), self.isDown(), self.isChecked(), self.hasFocus(), LOOK.theme, LOOK.text_size)
+        if key != self._cache_key or self._cache is None:
+            pixmap = QPixmap(max(1, round(self.width() * ratio)), max(1, round(self.height() * ratio)))
+            pixmap.setDevicePixelRatio(ratio)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            self._render(QPainter(pixmap))
+            self._cache, self._cache_key = pixmap, key
+        QPainter(self).drawPixmap(0, 0, self._cache)
+
+    def _render(self, painter: QPainter) -> None:
+        c = LOOK.colors
+        kind, tone = self.kind, self.tone
+        enabled, hover, down = self.isEnabled(), self.underMouse(), self.isDown()
+        fill: Optional[str]
+        border: Optional[str]
+        text = _TONE_TEXT.get(tone, "text")
+        if kind == "primary":
+            fill = ("accent_hover" if hover or down else "accent") if enabled else "surface_hover"
+            border = ("text" if self.hasFocus() or down else fill) if enabled else "border"
+            text = "on_accent" if enabled else "text_disabled"
+        elif kind == "nav":
+            fill = "surface_hover" if self.isChecked() else ("surface_alt" if hover else None)
+            border = "accent" if self.hasFocus() else None
+        elif kind == "link":
+            fill, border, text = None, ("accent" if self.hasFocus() else None), "accent_text"
+        elif kind == "option":
+            fill = "surface_hover" if hover and enabled else "surface"
+            border = ("accent" if enabled else "border") if not self.hasFocus() else "text"
+            text = "accent_text" if enabled else "text_disabled"
+        else:
+            fill = "border" if down else ("surface_hover" if hover and enabled else "surface_alt")
+            border = "accent" if self.hasFocus() else _TONE_BORDER.get(tone, "border")
+        if not enabled and kind not in ("primary", "option"):
+            text = "text_disabled"
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = min(10.0, rect.height() / 2) if kind in ("chip", "option") else 8.0
+        painter.setPen(QPen(QColor(c[border]), 1) if border else Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(c[fill]) if fill else Qt.BrushStyle.NoBrush)
+        if fill or border:
+            painter.drawRoundedRect(rect, radius, radius)
+        font = self.font()
+        if kind == "link" and hover:
+            font.setUnderline(True)
+        painter.setFont(font)
+        painter.setPen(QColor(c[text]))
+        pad_x, _ = _BUTTON_PAD.get(kind, _BUTTON_PAD[""])
+        align = Qt.AlignmentFlag.AlignVCenter | (Qt.AlignmentFlag.AlignLeft if kind == "nav"
+                                                 else Qt.AlignmentFlag.AlignHCenter)
+        area = self.rect().adjusted(pad_x if kind == "nav" else 2, 0, -2, 0)
+        painter.drawText(area, align, QFontMetrics(font).elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                                                    area.width()))
+        painter.end()
+
+
 def button(text: str, on_click: Optional[Callable[[], object]] = None, kind: Optional[str] = None,
-           tone: Optional[str] = None, tooltip: str = "") -> QPushButton:
-    widget = QPushButton(text)
-    if kind:
-        widget.setProperty("kind", kind)
-    if tone:
-        widget.setProperty("tone", tone)
+           tone: Optional[str] = None, tooltip: str = "") -> Button:
+    widget = Button(text, kind=kind or "", tone=tone or "")
     if tooltip:
         widget.setToolTip(tooltip)
-    widget.setCursor(Qt.CursorShape.PointingHandCursor)
     if on_click is not None:
         widget.clicked.connect(lambda _checked=False: on_click())
     return widget
 
 
+# ---------------------------------------------------------------- cards
+_CARD = {"true": ("surface", "border", 12), "alt": ("surface_alt", "border", 12), "today": ("surface", "accent", 12),
+         "selected": ("surface", "accent", 12), "inset": ("surface_alt", None, 8), "banner": ("banner_bg", None, 10)}
+
+
+class Card(QFrame):
+    """A rounded panel painted from the theme (kind in the ``card`` property)."""
+
+    def __init__(self, kind: str = "true") -> None:
+        super().__init__()
+        self.setProperty("card", kind)
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        fill, border, radius = _CARD.get(str(self.property("card") or "true"), _CARD["true"])
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(LOOK.color(border), 1) if border else Qt.PenStyle.NoPen)
+        painter.setBrush(LOOK.color(fill))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+
 def card(kind: str = "true", vertical: bool = True, margins: tuple[int, int, int, int] = (14, 12, 14, 12),
-         spacing: int = 6) -> tuple[QFrame, QBoxLayout]:
-    frame = QFrame()
-    frame.setProperty("card", kind)
+         spacing: int = 6) -> tuple[Card, QBoxLayout]:
+    frame = Card(kind)
     layout: QBoxLayout = QVBoxLayout(frame) if vertical else QHBoxLayout(frame)
     layout.setContentsMargins(*margins)
     layout.setSpacing(spacing)
     return frame, layout
 
 
+# ---------------------------------------------------------------- layout helpers
 def hbox(*widgets: QWidget, spacing: int = 6, margins: tuple[int, int, int, int] = (0, 0, 0, 0),
          stretch_at: Optional[int] = None) -> QHBoxLayout:
     layout = QHBoxLayout()
@@ -97,7 +224,24 @@ class Dot(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(LOOK.color("border"), 1))
         painter.setBrush(self._color)
-        painter.drawEllipse(self.rect().adjusted(0, 0, -1, -1))
+        painter.drawEllipse(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5))
+
+
+class ColorBar(QWidget):
+    """The thin vertical subject-colour bar at the left of a timeline row."""
+
+    def __init__(self, color: str, width: int = 5) -> None:
+        super().__init__()
+        self._color = _subject_color(color)
+        self.setFixedWidth(width)
+        self.setMinimumHeight(24)
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._color)
+        painter.drawRoundedRect(QRectF(self.rect()), 2.5, 2.5)
 
 
 class Chip(QWidget):
@@ -109,22 +253,43 @@ class Chip(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(Dot(color), 0, Qt.AlignmentFlag.AlignVCenter)
-        self.label = label(text, "strong14" if size >= 14 else "strong")
-        layout.addWidget(self.label)
-        layout.addStretch(1)
+        self.label = label(text, "strong14" if size >= 14 else "strong", wrap=True)
+        layout.addWidget(self.label, 1)
 
 
-class KpiCard(QFrame):
-    def __init__(self, title: str) -> None:
+class Bar(QWidget):
+    """A flat backlog bar: ``value`` in 0..1, coloured by tone (success / warning / danger)."""
+
+    def __init__(self, value: float = 0.0, tone: str = "") -> None:
         super().__init__()
-        self.setProperty("card", "true")
+        self.value = max(0.0, min(1.0, value))
+        self.tone = tone
+        self.setFixedHeight(8)
+        self.setMinimumWidth(40)
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        rect = QRectF(self.rect())
+        painter.setBrush(LOOK.color("surface_hover"))
+        painter.drawRoundedRect(rect, 4, 4)
+        if self.value > 0:
+            painter.setBrush(LOOK.color(self.tone if self.tone in ("success", "warning", "danger") else "accent"))
+            painter.drawRoundedRect(QRectF(rect.x(), rect.y(), max(8.0, rect.width() * self.value), rect.height()),
+                                    4, 4)
+
+
+class KpiCard(Card):
+    def __init__(self, title: str) -> None:
+        super().__init__("true")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(0)
         layout.addWidget(label(title.upper(), "caption"))
         self.value = label("–", "kpi")
         layout.addWidget(self.value)
-        self.hint = label("", "small")
+        self.hint = label("", "small", wrap=True)
         layout.addWidget(self.hint)
 
     def set(self, value: str, hint: str = "", tone: Optional[str] = None) -> None:
@@ -141,6 +306,7 @@ def spinbox(value: int = 0, step: int = 15, minimum: int = 0, maximum: int = 960
     widget.setValue(int(value))
     widget.setSuffix(suffix)
     widget.setAccelerated(True)
+    restyle(widget)
     return widget
 
 
@@ -169,28 +335,68 @@ def field(title: str, widget: QWidget) -> QWidget:
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(3)
-    caption = label(title, "small")
+    caption = label(title, "small", wrap=True)
     caption.setBuddy(widget)
     layout.addWidget(caption)
     layout.addWidget(widget)
     return holder
 
 
+COLUMN_MIN_WIDTH = 220        # Qt: the narrowest column next to a splitter handle (both Subjects columns fit
+                              # a 1024 px window, also at the Large text size)
+
+
+class ScrollArea(QScrollArea):
+    """A vertical scroll area that asks for its content's minimum width, so a splitter or the window can
+    never make it narrower than its content (nothing is clipped on the right)."""
+
+    floor = 0                     # a column may ask for at least this much (COLUMN_MIN_WIDTH)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        content = self.widget()
+        width = content.minimumSizeHint().width() if content is not None else 0
+        return QSize(max(self.floor, width + self.verticalScrollBar().sizeHint().width() + 2), 80)
+
+
 def scroll_area(content: QWidget) -> QScrollArea:
-    area = QScrollArea()
+    """A frameless vertical scroll area; it shows the background of the view behind it."""
+    area = ScrollArea()
     area.setWidgetResizable(True)
     area.setFrameShape(QFrame.Shape.NoFrame)
     area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     area.setWidget(content)
+    area.viewport().setAutoFillBackground(False)
+    content.setAutoFillBackground(False)
     area.verticalScrollBar().setSingleStep(24)
     return area
 
 
+# ---------------------------------------------------------------- splitter
 class _Handle(QSplitterHandle):
+    def __init__(self, orientation: Qt.Orientation, parent: QSplitter) -> None:
+        super().__init__(orientation, parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self._pressed = False
+
+    def mousePressEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+        self._pressed = True
+        self.update()
+        super().mousePressEvent(event)  # type: ignore[arg-type]
+
+    def mouseReleaseEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+        self._pressed = False
+        self.update()
+        super().mouseReleaseEvent(event)  # type: ignore[arg-type]
+
     def mouseDoubleClickEvent(self, event: object) -> None:  # noqa: N802 - Qt API
         splitter = self.splitter()
         if isinstance(splitter, Splitter):
             splitter.reset_requested.emit()
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        if self._pressed or self.underMouse():
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), LOOK.color("accent" if self._pressed else "border"))
 
 
 class Splitter(QSplitter):
@@ -214,14 +420,24 @@ class Badge(QLabel):
 
     def __init__(self) -> None:
         super().__init__("")
-        self.setObjectName("badge")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumSize(QSize(18, 18))
+        self.setMinimumSize(QSize(20, 20))
         self.hide()
 
     def set_count(self, count: int) -> None:
         self.setText(str(count))
         self.setVisible(count > 0)
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(LOOK.color("danger"))
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        painter.setPen(LOOK.color("on_danger"))
+        painter.setFont(LOOK.font(11, bold=True))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
 
 
 class FlowLayout(QLayout):
@@ -254,9 +470,9 @@ class FlowLayout(QLayout):
     def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt API
         return self._arrange(width, apply=False)
 
-    def setGeometry(self, rect: object) -> None:  # noqa: N802 - Qt API
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802 - Qt API
         super().setGeometry(rect)
-        self._arrange(rect.width(), apply=True, origin=(rect.x(), rect.y()))  # type: ignore[attr-defined]
+        self._arrange(rect.width(), apply=True, origin=(rect.x(), rect.y()))
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
         return self.minimumSize()
@@ -274,25 +490,7 @@ class FlowLayout(QLayout):
             if x and x + hint.width() > width:
                 x, y, line_h = 0, y + line_h + self._spacing, 0
             if apply:
-                from PySide6.QtCore import QRect
                 item.setGeometry(QRect(origin[0] + x, origin[1] + y, hint.width(), hint.height()))
             x += hint.width() + self._spacing
             line_h = max(line_h, hint.height())
         return y + line_h
-
-
-class ColorBar(QWidget):
-    """The thin vertical subject-colour bar at the left of a timeline row."""
-
-    def __init__(self, color: str, width: int = 5) -> None:
-        super().__init__()
-        self._color = _subject_color(color)
-        self.setFixedWidth(width)
-        self.setMinimumHeight(24)
-
-    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._color)
-        painter.drawRoundedRect(self.rect(), 2.5, 2.5)

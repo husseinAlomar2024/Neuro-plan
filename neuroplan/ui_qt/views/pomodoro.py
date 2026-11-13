@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
 
 from ... import timer as timer_mod
 from ...timer import PomodoroTimer, TimerCall, TimerError
 from ..style import set_prop
-from ..widgets import button, card, label, spinbox
+from ..widgets import Card, button, card, label, spinbox
 
 
-class PomodoroWidget(QFrame):
+class PomodoroWidget(Card):
     def __init__(self, timer: PomodoroTimer, on_call: Callable[[TimerCall], None]) -> None:
-        super().__init__()
-        self.setProperty("card", "true")
+        super().__init__("true")
         self.timer = timer
         self.on_call = on_call
         outer = QVBoxLayout(self)

@@ -1,20 +1,34 @@
-"""Theme and text size of the Qt UI: one stylesheet generated from the colour tokens, live switching.
+"""Theme and text size of the Qt UI, without stylesheets.
 
-Widgets carry roles as dynamic properties (``kind="primary"``, ``role="muted"``, ``card="true"``…) and the
-stylesheet styles those roles, so no widget contains a colour. Painted items (chat bubbles) read the
-same tokens through ``color()``. Font sizes are given at "Medium" and scaled by the text size."""
+Qt stylesheets made every layout and paint pass about twice as slow (measured with tools/ui_check.py), so
+the look is built from: the Fusion style with a QPalette made from the colour tokens, fonts and colours
+set per role on labels, and a few custom-painted primitives (buttons, cards, splitter handle, badge — see
+widgets.py) that read the tokens when they paint. Widgets carry their role as dynamic properties
+(``role``, ``tone``, ``kind``, ``card``, ``bg``); ``restyle`` applies them, and a theme or text-size switch
+re-applies them to every widget, live."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSpinBox, QApplication, QLabel, QProgressBar, QSpinBox,
+                               QToolTip, QWidget)
 
 from .. import config
 from ..palette import THEMES
 
 FAMILY = "Segoe UI"
 MONO_FAMILY = "Consolas"
+
+# role → (size at Medium, bold, family)
+ROLE_FONTS: dict[str, tuple[int, bool, str]] = {
+    "": (13, False, FAMILY), "title": (22, True, FAMILY), "brand": (19, True, FAMILY), "h2": (15, True, FAMILY),
+    "muted": (13, False, FAMILY), "small": (11, False, FAMILY), "caption": (10, True, FAMILY),
+    "kpi": (24, True, FAMILY), "clock": (34, True, MONO_FAMILY), "time": (14, True, MONO_FAMILY),
+    "strong": (13, True, FAMILY), "strong14": (14, True, FAMILY)}
+ROLE_COLOR = {"muted": "text_muted", "small": "text_muted", "caption": "text_muted"}
+TONE_COLOR = {"success": "success", "warning": "warning", "danger": "danger", "accent": "accent_text",
+              "muted": "text_muted"}
 
 
 class Look:
@@ -23,6 +37,7 @@ class Look:
     def __init__(self) -> None:
         self.theme = config.THEME_NAMES[0]
         self.text_size = "Medium"
+        self._fonts: dict[tuple[int, bool, str, str], QFont] = {}
 
     # ------------------------------------------------------------ values
     @property
@@ -41,147 +56,108 @@ class Look:
         return max(8, round(base * self.factor))
 
     def font(self, base: int = config.UI_FONT_SIZE, bold: bool = False, family: str = FAMILY) -> QFont:
-        font = QFont(family)
-        font.setPixelSize(self.px(base))
-        if bold:
-            font.setWeight(QFont.Weight.DemiBold)
-        return font
+        key = (base, bold, family, self.text_size)
+        cached = self._fonts.get(key)
+        if cached is None:
+            cached = QFont(family)
+            cached.setPixelSize(self.px(base))
+            cached.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
+            cached.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+            self._fonts[key] = cached
+        return cached
 
     def chat_font(self, base: int = config.CHAT_FONT_SIZE, bold: bool = False) -> QFont:
         return self.font(base, bold)
 
+    def palette(self) -> QPalette:
+        c = self.colors
+        pal = QPalette()
+        roles = {QPalette.ColorRole.Window: "bg", QPalette.ColorRole.WindowText: "text",
+                 QPalette.ColorRole.Base: "surface_alt", QPalette.ColorRole.AlternateBase: "surface",
+                 QPalette.ColorRole.Text: "text", QPalette.ColorRole.Button: "surface_alt",
+                 QPalette.ColorRole.ButtonText: "text", QPalette.ColorRole.BrightText: "on_danger",
+                 QPalette.ColorRole.Highlight: "accent", QPalette.ColorRole.HighlightedText: "on_accent",
+                 QPalette.ColorRole.ToolTipBase: "surface", QPalette.ColorRole.ToolTipText: "text",
+                 QPalette.ColorRole.PlaceholderText: "text_muted", QPalette.ColorRole.Link: "accent_text",
+                 QPalette.ColorRole.Light: "surface_hover", QPalette.ColorRole.Midlight: "surface_hover",
+                 QPalette.ColorRole.Mid: "border", QPalette.ColorRole.Dark: "border",
+                 QPalette.ColorRole.Shadow: "bg"}
+        for role, token in roles.items():
+            pal.setColor(role, QColor(c[token]))
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+            pal.setColor(QPalette.ColorGroup.Disabled, role, QColor(c["text_disabled"]))
+        return pal
+
     # ------------------------------------------------------------ switching
     def apply(self, app: Optional[QApplication] = None) -> None:
-        """Install the stylesheet and default font for the current theme and text size."""
+        """Install the palette and default font for the current theme and text size, and re-style every
+        existing widget (live switch)."""
         app = app or QApplication.instance()  # type: ignore[assignment]
         if app is None:
             return
+        if app.style().name().lower() != "fusion":
+            app.setStyle("Fusion")
+        app.setStyleSheet("")
+        palette = self.palette()
+        app.setPalette(palette)
+        QToolTip.setPalette(palette)
         app.setFont(self.font())
-        app.setStyleSheet(self.stylesheet())
-
-    def stylesheet(self) -> str:
-        c = self.colors
-        px = self.px
-        return f"""
-* {{ font-family: "{FAMILY}"; }}
-QWidget {{ color: {c['text']}; font-size: {px(13)}px; }}
-QMainWindow, QWidget#centre, QStackedWidget, QWidget[view="true"], QScrollArea[view="true"] > QWidget > QWidget
-    {{ background: {c['bg']}; }}
-QScrollArea {{ background: transparent; border: none; }}
-QScrollArea > QWidget > QWidget {{ background: transparent; }}
-QWidget#sidebar {{ background: {c['sidebar']}; }}
-QWidget#coachPanel, QWidget#coachStrip {{ background: {c['surface']}; }}
-QToolTip {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 4px 6px; }}
-
-QLabel {{ background: transparent; }}
-QLabel[role="title"] {{ font-size: {px(22)}px; font-weight: 700; }}
-QLabel[role="brand"] {{ font-size: {px(19)}px; font-weight: 700; }}
-QLabel[role="h2"] {{ font-size: {px(15)}px; font-weight: 700; }}
-QLabel[role="muted"] {{ color: {c['text_muted']}; }}
-QLabel[role="small"] {{ color: {c['text_muted']}; font-size: {px(11)}px; }}
-QLabel[role="caption"] {{ color: {c['text_muted']}; font-size: {px(10)}px; font-weight: 700; letter-spacing: 1px; }}
-QLabel[role="strong"] {{ font-weight: 600; }}
-QLabel[role="strong14"] {{ font-size: {px(14)}px; font-weight: 600; }}
-QLabel[role="kpi"] {{ font-size: {px(24)}px; font-weight: 700; }}
-QLabel[role="clock"] {{ font-family: "{MONO_FAMILY}"; font-size: {px(34)}px; font-weight: 700; }}
-QLabel[role="time"] {{ font-family: "{MONO_FAMILY}"; font-size: {px(14)}px; font-weight: 700; }}
-QLabel[tone="success"] {{ color: {c['success']}; }}
-QLabel[tone="warning"] {{ color: {c['warning']}; }}
-QLabel[tone="danger"] {{ color: {c['danger']}; }}
-QLabel[tone="accent"] {{ color: {c['accent_text']}; }}
-QLabel[tone="muted"] {{ color: {c['text_muted']}; }}
-QLabel[toast="error"] {{ color: {c['danger']}; }}
-
-QFrame[card="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 12px; }}
-QFrame[card="alt"] {{ background: {c['surface_alt']}; border: 1px solid {c['border']}; border-radius: 12px; }}
-QFrame[card="today"] {{ background: {c['surface']}; border: 1px solid {c['accent']}; border-radius: 12px; }}
-QFrame[card="selected"] {{ background: {c['surface']}; border: 1px solid {c['accent']}; border-radius: 12px; }}
-QFrame[card="inset"] {{ background: {c['surface_alt']}; border: none; border-radius: 8px; }}
-QFrame[card="banner"] {{ background: {c['banner_bg']}; border: none; border-radius: 10px; }}
-QFrame[card="banner"] QLabel {{ color: {c['danger']}; font-weight: 600; }}
-QFrame[card] QLabel {{ border: none; }}
-
-QPushButton {{ background: {c['surface_alt']}; color: {c['text']}; border: 1px solid {c['border']};
-    border-radius: 8px; padding: 5px 12px; font-size: {px(12)}px; }}
-QPushButton:hover {{ background: {c['surface_hover']}; }}
-QPushButton:pressed {{ background: {c['border']}; }}
-QPushButton:focus {{ border: 1px solid {c['accent']}; }}
-QPushButton:disabled {{ color: {c['text_disabled']}; background: {c['surface_alt']}; }}
-QPushButton[kind="primary"] {{ background: {c['accent']}; color: {c['on_accent']}; border: 1px solid {c['accent']};
-    font-weight: 600; font-size: {px(13)}px; }}
-QPushButton[kind="primary"]:hover {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
-QPushButton[kind="primary"]:pressed {{ background: {c['accent_hover']}; border-color: {c['text']}; }}
-QPushButton[kind="primary"]:focus {{ border: 1px solid {c['text']}; }}
-QPushButton[kind="primary"]:disabled {{ background: {c['surface_hover']}; border-color: {c['border']};
-    color: {c['text_disabled']}; }}
-QPushButton[kind="nav"] {{ background: transparent; border: 1px solid transparent; text-align: left;
-    padding: 8px 12px; font-weight: 600; font-size: {px(13)}px; }}
-QPushButton[kind="nav"]:hover {{ background: {c['surface_alt']}; }}
-QPushButton[kind="nav"]:checked {{ background: {c['surface_hover']}; }}
-QPushButton[kind="nav"]:focus {{ border: 1px solid {c['accent']}; }}
-QPushButton[kind="chip"] {{ border-radius: 10px; padding: 3px 10px; font-size: {px(11)}px; }}
-QPushButton[kind="option"] {{ background: {c['surface']}; color: {c['accent_text']}; border: 1px solid {c['accent']};
-    border-radius: 10px; padding: 3px 12px; font-weight: 600; font-size: {px(12)}px; }}
-QPushButton[kind="option"]:hover {{ background: {c['surface_hover']}; }}
-QPushButton[kind="option"]:disabled {{ color: {c['text_disabled']}; border-color: {c['border']}; }}
-QPushButton[kind="link"] {{ background: transparent; border: 1px solid transparent; color: {c['accent_text']};
-    padding: 1px 4px; font-weight: 600; }}
-QPushButton[kind="link"]:hover {{ text-decoration: underline; }}
-QPushButton[kind="link"]:focus {{ border: 1px solid {c['accent']}; }}
-QPushButton[kind="icon"] {{ padding: 4px; min-width: 28px; }}
-QPushButton[tone="danger"] {{ color: {c['danger']}; }}
-QPushButton[tone="accent"] {{ color: {c['accent_text']}; }}
-QPushButton[tone="success"] {{ color: {c['success']}; border-color: {c['success']}; }}
-QPushButton[tone="warning"] {{ color: {c['warning']}; border-color: {c['warning']}; }}
-QPushButton[tone="dangerline"] {{ color: {c['danger']}; border-color: {c['danger']}; }}
-QPushButton[tone="accentline"] {{ color: {c['accent_text']}; border-color: {c['accent']}; }}
-QLabel#badge {{ background: {c['danger']}; color: {c['on_danger']}; border-radius: 9px; padding: 0 5px;
-    font-size: {px(11)}px; font-weight: 700; }}
-
-QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{ background: {c['surface_alt']}; color: {c['text']};
-    border: 1px solid {c['border']}; border-radius: 6px; padding: 4px 6px;
-    selection-background-color: {c['accent']}; selection-color: {c['on_accent']}; }}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {c['accent']}; }}
-QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {{ color: {c['text_disabled']}; }}
-QComboBox::drop-down {{ border: none; width: 20px; }}
-QComboBox QAbstractItemView {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['border']};
-    selection-background-color: {c['surface_hover']}; selection-color: {c['text']}; outline: none; }}
-QSpinBox::up-button, QSpinBox::down-button {{ width: 16px; border: none; background: transparent; }}
-QCheckBox {{ spacing: 8px; }}
-QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {c['border']}; border-radius: 4px;
-    background: {c['surface_alt']}; }}
-QCheckBox::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; }}
-QCheckBox:focus {{ color: {c['accent_text']}; }}
-
-QProgressBar {{ background: {c['surface_hover']}; border: none; border-radius: 4px; max-height: 8px; min-height: 8px; }}
-QProgressBar::chunk {{ border-radius: 4px; background: {c['accent']}; }}
-QProgressBar[tone="success"]::chunk {{ background: {c['success']}; }}
-QProgressBar[tone="warning"]::chunk {{ background: {c['warning']}; }}
-QProgressBar[tone="danger"]::chunk {{ background: {c['danger']}; }}
-
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 3px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: {c['scrollbar_hover']}; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: {c['scrollbar']}; border-radius: 3px; min-width: 30px; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
-QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
-
-QSplitter::handle {{ background: transparent; }}
-QSplitter::handle:hover {{ background: {c['border']}; }}
-QSplitter::handle:pressed {{ background: {c['accent']}; }}
-QListView#messages {{ background: {c['bg']}; border: none; border-radius: 10px; outline: none; }}
-"""
+        for widget in app.allWidgets():
+            restyle(widget)
 
 
 LOOK = Look()
 
 
-def set_prop(widget: QWidget, name: str, value: object) -> None:
-    """Change a styling property at runtime and re-apply the stylesheet rules to the widget."""
+def restyle(widget: QWidget) -> None:
+    """Apply the widget's role properties (font, colour, background) for the current look."""
+    if isinstance(widget, QLabel):
+        role = str(widget.property("role") or "")
+        size, bold, family = ROLE_FONTS.get(role, ROLE_FONTS[""])
+        widget.setFont(LOOK.font(size, bold, family))
+        tone = str(widget.property("tone") or "")
+        token = TONE_COLOR.get(tone) or ROLE_COLOR.get(role) or "text"
+        _set_color(widget, QPalette.ColorRole.WindowText, token)
+    elif isinstance(widget, QProgressBar):
+        tone = str(widget.property("tone") or "")
+        _set_color(widget, QPalette.ColorRole.Highlight, TONE_COLOR.get(tone, "accent"))
+        _set_color(widget, QPalette.ColorRole.Base, "surface_hover")
+        _set_color(widget, QPalette.ColorRole.Window, "surface_hover")
+    elif isinstance(widget, QSpinBox):
+        # wide enough for its largest value at the current font size (the spin buttons need ~36 px)
+        text = widget.textFromValue(widget.maximum()) + widget.suffix()
+        widget.setMinimumWidth(widget.fontMetrics().horizontalAdvance(text) + 40)
+    restyle_hook = getattr(widget, "restyle", None)
+    if callable(restyle_hook):
+        restyle_hook()
+    bg = widget.property("bg")
+    if bg:
+        target = widget.viewport() if isinstance(widget, QAbstractScrollArea) else widget
+        pal = target.palette()
+        pal.setColor(QPalette.ColorRole.Window, LOOK.color(str(bg)))
+        pal.setColor(QPalette.ColorRole.Base, LOOK.color(str(bg)))
+        target.setPalette(pal)
+        target.setAutoFillBackground(True)
+    widget.update()
+
+
+def _set_color(widget: QWidget, role: QPalette.ColorRole, token: str) -> None:
+    pal = widget.palette()
+    color = LOOK.color(token)
+    if pal.color(role) != color:
+        pal.setColor(QPalette.ColorGroup.Active, role, color)
+        pal.setColor(QPalette.ColorGroup.Inactive, role, color)
+        widget.setPalette(pal)
+
+
+def set_prop(widget: QWidget, name: str, value: Any) -> None:
+    """Change a styling property at runtime and re-apply the widget's style."""
     if widget.property(name) == value:
         return
     widget.setProperty(name, value)
-    style = widget.style()
-    style.unpolish(widget)
-    style.polish(widget)
+    restyle(widget)
+
+
+def set_bg(widget: QWidget, token: str) -> None:
+    widget.setProperty("bg", token)
+    restyle(widget)

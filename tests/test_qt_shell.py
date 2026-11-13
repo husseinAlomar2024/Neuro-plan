@@ -58,31 +58,43 @@ def test_coach_panel_never_narrower_than_its_minimum(win: Any) -> None:  # noqa:
     assert win.splitter.sizes()[0] >= win.centre.minimumSizeHint().width()
 
 
+def _window_color(widget: Any) -> str:
+    from PySide6.QtGui import QPalette
+    return widget.palette().color(QPalette.ColorRole.Window).name().upper()
+
+
 def test_theme_switch_applies_live_and_is_stored(win: Any, seeded: Repository) -> None:  # noqa: F811
     from neuroplan.ui_qt.style import LOOK
-    sheet = QApplication.instance().styleSheet()
-    assert THEMES["Midnight"].colors["bg"] in sheet
+    app = QApplication.instance()
+    assert app.styleSheet() == "" and app.style().name().lower() == "fusion", "no stylesheet (slow)"
+    assert _window_color(app) == THEMES["Midnight"].colors["bg"]
+    title = win.views["Today"].title_label
     win.cycle_theme()
     assert LOOK.theme == "Ivory & Gold" and seeded.get_setting("theme") == "Ivory & Gold"
-    assert THEMES["Ivory & Gold"].colors["bg"] in QApplication.instance().styleSheet()
+    assert _window_color(app) == THEMES["Ivory & Gold"].colors["bg"]
+    assert _window_color(win.views["Today"]) == THEMES["Ivory & Gold"].colors["bg"]
+    from PySide6.QtGui import QPalette
+    assert title.palette().color(QPalette.ColorRole.WindowText).name().upper() == THEMES["Ivory & Gold"].colors["text"]
     assert "Ivory & Gold" in win.theme_button.text()
     win.set_theme("Mist")
-    assert THEMES["Mist"].colors["surface"] in QApplication.instance().styleSheet()
+    assert _window_color(win.panel) == THEMES["Mist"].colors["surface"]
     win.set_theme("Midnight")
 
 
 def test_text_size_shortcuts(win: Any, seeded: Repository, qtbot: Any) -> None:  # noqa: F811
     from neuroplan.ui_qt.style import LOOK
-    assert LOOK.px(config.CHAT_FONT_SIZE) == 15
+    title = win.views["Today"].title_label
+    assert LOOK.px(config.CHAT_FONT_SIZE) == 15 and title.font().pixelSize() == 22
     qtbot.keyClick(win, Qt.Key.Key_Equal, Qt.KeyboardModifier.ControlModifier)       # Ctrl+=  (Ctrl+Plus)
     assert LOOK.text_size == "Large" and LOOK.px(15) == 17 and LOOK.px(13) == 15
     assert seeded.get_setting("text_size") == "Large"
-    assert "font-size: 17px" in QApplication.instance().styleSheet() or "17px" in QApplication.instance().styleSheet()
+    assert title.font().pixelSize() == round(22 * 17 / 15), "live: existing labels get the new size"
+    assert win.nav["Today"].font().pixelSize() == 15
     qtbot.keyClick(win, Qt.Key.Key_Minus, Qt.KeyboardModifier.ControlModifier)
     qtbot.keyClick(win, Qt.Key.Key_Minus, Qt.KeyboardModifier.ControlModifier)
     assert LOOK.text_size == "Small" and LOOK.px(15) == 13
     qtbot.keyClick(win, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
-    assert LOOK.text_size == "Medium"
+    assert LOOK.text_size == "Medium" and title.font().pixelSize() == 22
 
 
 def test_coach_collapses_to_a_strip_with_unread_badge(win: Any, qtbot: Any) -> None:  # noqa: F811

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QHBoxLayout, QPlainTextEdit, QStackedLayout, QVBox
 from .. import config
 from ..models import ChatMessage
 from .chat import ChatView, Item, MessageWidget
+from .style import set_bg
 from .widgets import Badge, FlowLayout, button, label
 
 if TYPE_CHECKING:
@@ -37,8 +38,7 @@ class CoachPanel(QWidget):
     def __init__(self, app: "MainWindow") -> None:
         super().__init__()
         self.app = app
-        self.setObjectName("coachPanel")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        set_bg(self, "surface")
         self.collapsed = False
         self.unread = 0
         self._saved_sizes: list[int] = []
@@ -90,7 +90,7 @@ class CoachPanel(QWidget):
 
         # ---- collapsed strip
         strip = QWidget()
-        strip.setObjectName("coachStrip")
+        set_bg(strip, "surface")
         strip_layout = QVBoxLayout(strip)
         strip_layout.setContentsMargins(8, 14, 8, 8)
         strip_layout.setSpacing(4)

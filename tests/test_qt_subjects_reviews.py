@@ -86,7 +86,6 @@ def test_subjects_splitter_state_persists_and_resets(win: Any, seeded: Repositor
     total = sum(view.splitter.sizes())
     view.splitter.setSizes([330, total - 330])
     view._save_splitter()
-    assert view.splitter.sizes()[0] >= config.COLUMN_MIN_WIDTH
     close_window(win)
     again = make_window(seeded, qtbot)
     try:
@@ -96,10 +95,12 @@ def test_subjects_splitter_state_persists_and_resets(win: Any, seeded: Repositor
         assert abs(split.sizes()[0] - 330) <= 2
         qtbot.mouseDClick(split.handle(1), Qt.MouseButton.LeftButton, pos=QPoint(2, 20))
         room = sum(split.sizes())             # the form keeps its minimum width
-        expected = min(config.SUBJECTS_LIST_DEFAULT_WIDTH, room - config.COLUMN_MIN_WIDTH)
+        form_min = again.views["Subjects"].form_scroll.minimumSizeHint().width()
+        expected = min(config.SUBJECTS_LIST_DEFAULT_WIDTH, room - form_min)
         assert abs(split.sizes()[0] - expected) <= 2
         split.setSizes([50, total - 50])
-        assert split.sizes()[0] >= config.COLUMN_MIN_WIDTH
+        from neuroplan.ui_qt.widgets import COLUMN_MIN_WIDTH
+        assert split.sizes()[0] >= COLUMN_MIN_WIDTH
     finally:
         close_window(again)
 
