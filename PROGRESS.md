@@ -6,7 +6,8 @@ Qt rewrite on branch `qt-ui` (user decision 2026-11-13, see DECISIONS "Qt front 
 - Q2 coach panel and message list — done
 - Q3 Today + Pomodoro — done
 - Q4 Subjects + Reviews — done
-- Q5 Week + Settings — next
+- Q5 Week + Settings — done
+- Q6 ui_check + visual fixes + performance — next
 - Q4 Subjects + Reviews, Q5 Week + Settings, Q6 tools/ui_check.py + visual fixes + performance, Q7 packaging (onedir), switch main.py, remove the Tk UI, update README/SPEC/CLAUDE.md
 Qt code lives in `neuroplan/ui_qt/`; tests `tests/test_qt_*.py` (pytest-qt, offscreen). The old Tk UI (`neuroplan/ui/`) stays until Q7.
 
