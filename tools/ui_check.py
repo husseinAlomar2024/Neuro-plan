@@ -66,13 +66,19 @@ def fill_chat(repo: Repository, count: int = 200) -> None:
         repo.add_message(role, text, actions)
 
 
+FULL_REPAINT = False          # --full-repaint: also force a repaint of the whole window in every pass
+
+
 def pass_time(app: QApplication, window: Any, change: Callable[[], None]) -> float:
-    """One layout+paint pass: the change, posted events (layout requests, timers due now), a full repaint."""
+    """One layout+paint pass: the change, then all posted events — layout requests and Qt's update
+    request, which paints every region that changed and flushes it to the screen. With FULL_REPAINT the
+    whole window is repainted as well (a conservative upper bound)."""
     start = time.perf_counter()
     change()
     app.sendPostedEvents()
     app.processEvents()
-    window.repaint()
+    if FULL_REPAINT:
+        window.repaint()
     return (time.perf_counter() - start) * 1000
 
 
@@ -97,7 +103,10 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="keep the PNG folder")
     parser.add_argument("--no-shots", action="store_true", help="skip the screenshots")
     parser.add_argument("--json", action="store_true", help="print results as JSON lines")
+    parser.add_argument("--full-repaint", action="store_true", help="force a full window repaint per pass")
     args = parser.parse_args()
+    global FULL_REPAINT
+    FULL_REPAINT = args.full_repaint
 
     from neuroplan.ui_qt.app import MainWindow, ensure_app
     app = ensure_app()
@@ -122,12 +131,18 @@ def main() -> int:
     results["drag coach splitter"] = stats(drag_splitter(
         app, window, main_split, max(window.centre.minimumSizeHint().width(), low) + 5,
         total - config.COACH_MIN_WIDTH - 5))
+    window.resize(1600, 800)                 # at 1280 px both Subjects columns sit at their minimum widths
     window.show_view("Subjects")
-    app.processEvents()
-    sub = window.views["Subjects"].splitter
+    for _ in range(5):
+        app.processEvents()
+    subjects = window.views["Subjects"]
+    sub = subjects.splitter
     sub_total = sum(sub.sizes())
-    results["drag subjects splitter"] = stats(drag_splitter(
-        app, window, sub, config.COLUMN_MIN_WIDTH + 5, sub_total - config.COLUMN_MIN_WIDTH - 5))
+    low = subjects.list_scroll.minimumSizeHint().width() + 5
+    high = sub_total - subjects.form_scroll.minimumSizeHint().width() - 5
+    results["drag subjects splitter"] = stats(drag_splitter(app, window, sub, low, high))
+    results["drag subjects splitter"]["range_px"] = (low, high)
+    window.resize(1280, 800)
     window.show_view("Today")
     app.processEvents()
 

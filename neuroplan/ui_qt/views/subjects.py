@@ -6,10 +6,10 @@ import json
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import QByteArray, QDate, Qt, QTimer
-from PySide6.QtWidgets import QCheckBox, QDateEdit, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDateEdit, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 
 from ... import config
-from ..widgets import (COLUMN_MIN_WIDTH, Bar, Card, Chip, Splitter, button, card, clear_layout, combo, field, label, line_edit, scroll_area,
+from ..widgets import (COLUMN_MIN_WIDTH, Bar, Card, CheckBox, Chip, elided, Splitter, button, card, clear_layout, combo, field, label, line_edit, scroll_area,
                        spinbox)
 from . import BaseView
 from .today import backlog_tone
@@ -31,10 +31,10 @@ class SubjectCard(Card):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(3)
         layout.addWidget(Chip(s["name"] + ("" if s["active"] else " (archived)"), s["color_hex"], 14))
-        layout.addWidget(label(f"{s['category']} · difficulty {s['difficulty']} · mastery {s['mastery']}",
-                               "small", wrap=True))
-        layout.addWidget(label(f"{s['done_units']} / {s['total_units']} units done · expected "
-                               f"{s['expected_units_by_now']} · {s['minutes_per_unit']} min/unit", wrap=True))
+        layout.addWidget(elided(f"{s['category']} · difficulty {s['difficulty']} · mastery {s['mastery']}",
+                                "small"))
+        layout.addWidget(elided(f"{s['done_units']} / {s['total_units']} units done · expected "
+                                f"{s['expected_units_by_now']} · {s['minutes_per_unit']} min/unit"))
         bar_row = QHBoxLayout()
         bar_row.setSpacing(10)
         backlog = s["backlog_units"]
@@ -46,7 +46,7 @@ class SubjectCard(Card):
         upcoming = [a for a in s["assessments"] if a["days_until"] >= 0]
         if upcoming:
             a = upcoming[0]
-            layout.addWidget(label(f"Next: {a['title']} in {a['days_until']} day(s)", "small", wrap=True))
+            layout.addWidget(elided(f"Next: {a['title']} in {a['days_until']} day(s)", "small"))
         foot = QHBoxLayout()
         foot.setSpacing(4)
         foot.addStretch(1)
@@ -80,7 +80,7 @@ class SubjectsView(BaseView):
         self.selected: Optional[str] = None           # subject name, None = new subject
         self.assessment_id: Optional[int] = None
         self.cards: dict[str, SubjectCard] = {}
-        self.show_archived = QCheckBox("Show archived")
+        self.show_archived = CheckBox("Show archived")
         self.show_archived.toggled.connect(self._toggle_archived)
         self.header_row.addWidget(self.show_archived)
 
@@ -162,7 +162,7 @@ class SubjectsView(BaseView):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
-        self.active = QCheckBox("Active (included in the plan)")
+        self.active = CheckBox("Active (included in the plan)")
         self.active.setChecked(True)
         layout.addWidget(self.active)
         row = QHBoxLayout()

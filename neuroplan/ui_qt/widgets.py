@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
+from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
                                QScrollArea, QSizePolicy, QSpinBox, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
 from .style import LOOK, restyle
@@ -33,6 +33,74 @@ def label(text: str = "", role: Optional[str] = None, tone: Optional[str] = None
         widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     restyle(widget)
     return widget
+
+
+class ElidedLabel(QLabel):
+    """A one-line label that shrinks by eliding ("…") instead of wrapping: cheap to lay out (no
+    height-for-width), and the full text is in the tooltip when it is cut."""
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), self.fontMetrics().horizontalAdvance("…") * 4 + 8), hint.height())
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        metrics = self.fontMetrics()
+        text = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width())
+        self.setToolTip(self.text() if text != self.text() else "")
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        painter.drawText(self.rect(), int(self.alignment() | Qt.AlignmentFlag.AlignVCenter), text)
+
+
+def elided(text: str = "", role: Optional[str] = None, tone: Optional[str] = None) -> ElidedLabel:
+    widget = ElidedLabel(text)
+    if role:
+        widget.setProperty("role", role)
+    if tone:
+        widget.setProperty("tone", tone)
+    widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)  # full width when there is room
+    restyle(widget)
+    return widget
+
+
+class CheckBox(QCheckBox):
+    """A checkbox whose box and tick are painted from the theme (visible in the light themes too)."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        metrics = self.fontMetrics()
+        return QSize(metrics.horizontalAdvance(self.text()) + 30, max(22, metrics.height() + 6))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        return self.sizeHint()
+
+    def hitButton(self, pos: object) -> bool:  # noqa: N802 - Qt API
+        return self.rect().contains(pos)  # type: ignore[arg-type]
+
+    def paintEvent(self, _event: object) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        size = 16
+        box = QRectF(1.5, (self.height() - size) / 2 + 0.5, size - 1, size - 1)
+        checked = self.isChecked()
+        edge = "accent" if (checked or self.hasFocus() or self.underMouse()) else "text_muted"
+        painter.setPen(QPen(LOOK.color(edge), 1.2))
+        painter.setBrush(LOOK.color("accent" if checked else "surface"))
+        painter.drawRoundedRect(box, 4, 4)
+        if checked:
+            pen = QPen(LOOK.color("on_accent"), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            x, y = box.x(), box.y()
+            painter.drawPolyline([QPointF(x + 3.5, y + 7.5), QPointF(x + 6.5, y + 10.5), QPointF(x + 11.5, y + 4.5)])
+        painter.setPen(LOOK.color("text" if self.isEnabled() else "text_disabled"))
+        painter.setFont(self.font())
+        painter.drawText(self.rect().adjusted(size + 9, 0, 0, 0), int(Qt.AlignmentFlag.AlignVCenter), self.text())
 
 
 # ---------------------------------------------------------------- buttons
@@ -253,7 +321,8 @@ class Chip(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(Dot(color), 0, Qt.AlignmentFlag.AlignVCenter)
-        self.label = label(text, "strong14" if size >= 14 else "strong", wrap=True)
+        self.label = elided(text, "strong14" if size >= 14 else "strong")
+        self.label.setMinimumWidth(min(self.label.sizeHint().width(), 60))
         layout.addWidget(self.label, 1)
 
 
@@ -289,7 +358,7 @@ class KpiCard(Card):
         layout.addWidget(label(title.upper(), "caption"))
         self.value = label("–", "kpi")
         layout.addWidget(self.value)
-        self.hint = label("", "small", wrap=True)
+        self.hint = elided("", "small")
         layout.addWidget(self.hint)
 
     def set(self, value: str, hint: str = "", tone: Optional[str] = None) -> None:
@@ -335,7 +404,8 @@ def field(title: str, widget: QWidget) -> QWidget:
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(3)
-    caption = label(title, "small", wrap=True)
+    # long captions wrap; short ones elide (cheaper to lay out while a splitter is dragged)
+    caption = label(title, "small", wrap=True) if len(title) > 26 else elided(title, "small")
     caption.setBuddy(widget)
     layout.addWidget(caption)
     layout.addWidget(widget)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import Qt
 
 from neuroplan.db.repository import Repository
 from neuroplan.models import ChatMessage
@@ -92,8 +92,8 @@ def test_arabic_message_is_right_to_left_and_right_aligned(win: Any) -> None:  #
 
 
 def _top_row(view: Any) -> tuple[int, int]:
-    index = view.indexAt(QPoint(10, 1))
-    return index.row(), view.visualRect(index).top()
+    row = view.row_at(1)
+    return row, view.visual_rect(row).top()
 
 
 def test_chat_keeps_its_anchor_on_resize(seeded: Repository, qtbot: Any) -> None:
@@ -109,8 +109,7 @@ def test_chat_keeps_its_anchor_on_resize(seeded: Repository, qtbot: Any) -> None
             window.splitter.setSizes([total - width, width])
             qtbot.wait(30)
             assert view.at_bottom(), width
-        model = view.chat_model
-        view.scrollTo(model.index(90), view.ScrollHint.PositionAtTop)
+        view.scroll_to_row(90)
         qtbot.wait(20)
         row, top = _top_row(view)
         assert 85 <= row <= 95

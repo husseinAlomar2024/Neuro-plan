@@ -1,7 +1,8 @@
 """The chat message list: model, layout, painting delegate and the view.
 
-Why model/view: a QListView only paints the rows on screen, so 500 messages cost nothing until they are
-scrolled into view. Each row's geometry comes from ``layout_message`` (QTextLayout: bidi-aware, wraps,
+Why a virtual list: only the rows on screen are painted, so 500 messages cost nothing until they are
+scrolled into view, and row heights/offsets live in plain Python lists (a QListView asked the Python
+delegate for every row's size on each layout pass, which made splitter drags slow). Each row's geometry comes from ``layout_message`` (QTextLayout: bidi-aware, wraps,
 slightly looser line spacing) and is cached per width. On a width change only the rows near the viewport
 are measured at once; the others keep their previous height and are measured in idle batches, and the
 scroll anchor (bottom, or the row at the top edge) is restored after every pass, so nothing jumps.
@@ -13,14 +14,14 @@ other rows are painted, their old buttons disabled."""
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QTextLayout, QTextOption
-from PySide6.QtWidgets import (QAbstractItemView, QListView, QPushButton, QStyledItemDelegate,
-                               QStyleOptionViewItem, QWidget)
+from PySide6.QtWidgets import QAbstractScrollArea, QFrame, QPushButton, QWidget
 
 from ..models import ChatMessage
 from .style import LOOK, set_bg
@@ -304,43 +305,24 @@ def _paint_disabled_button(painter: QPainter, rect: QRect, element: Element) -> 
     painter.setFont(look.chat_font(12, bold=element.kind != "cancel"))
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
-
 # ---------------------------------------------------------------- model
-class ChatModel(QAbstractListModel):
+class ChatModel:
+    """The rows of the chat (plain Python list; the view keeps its own geometry)."""
+
     def __init__(self) -> None:
-        super().__init__()
         self.items: list[Item] = []
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802 - Qt API
-        return 0 if parent.isValid() else len(self.items)
-
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        if not index.isValid():
-            return None
-        item = self.items[index.row()]
-        if role == Qt.ItemDataRole.DisplayRole:
-            return item.text
-        if role == Qt.ItemDataRole.UserRole:
-            return item
-        return None
+    def rowCount(self) -> int:  # noqa: N802 - kept from the Qt model API
+        return len(self.items)
 
     def append(self, item: Item) -> None:
-        row = len(self.items)
-        self.beginInsertRows(QModelIndex(), row, row)
         self.items.append(item)
-        self.endInsertRows()
 
     def prepend(self, items: list[Item]) -> None:
-        if not items:
-            return
-        self.beginInsertRows(QModelIndex(), 0, len(items) - 1)
         self.items[0:0] = items
-        self.endInsertRows()
 
     def reset(self, items: list[Item]) -> None:
-        self.beginResetModel()
         self.items = list(items)
-        self.endResetModel()
 
     def row_of(self, item: Item) -> int:
         for row in range(len(self.items) - 1, -1, -1):
@@ -349,21 +331,19 @@ class ChatModel(QAbstractListModel):
         return -1
 
 
-# ---------------------------------------------------------------- delegate
-class ChatDelegate(QStyledItemDelegate):
-    """Heights come from a cache keyed by (item, width); see the module docstring for the refinement."""
+# ---------------------------------------------------------------- layout cache
+class LayoutCache:
+    """Row layouts cached by (item, width). On a width change only ``exact_rows`` are measured; the others
+    keep their previous height as an estimate (``stale``) until the idle refinement measures them."""
 
-    def __init__(self, view: "ChatView") -> None:
-        super().__init__(view)
-        self.view = view
+    def __init__(self) -> None:
         self.width = 0
         self._cache: dict[tuple[int, int], MessageLayout] = {}      # (id(item), width) → layout
         self._last: dict[int, int] = {}                             # id(item) → last measured height
-        self.stale: set[int] = set()                                # id(item) measured at another width
-        self.exact_rows: Optional[range] = None                    # rows to measure exactly right now
+        self.stale: set[int] = set()
+        self.exact_rows: Optional[range] = None
 
     def invalidate(self, item: Optional[Item] = None) -> None:
-        """Forget cached layouts (all, or one item's)."""
         if item is None:
             self._cache.clear()
             self._last.clear()
@@ -395,18 +375,8 @@ class ChatDelegate(QStyledItemDelegate):
             return self._last[id(item)]                # estimate until the idle refinement
         return self.layout_for(item).height
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802 - Qt API
-        item: Item = index.data(Qt.ItemDataRole.UserRole)
-        return QSize(self.width, self.height_for(index.row(), item))
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
-        item: Item = index.data(Qt.ItemDataRole.UserRole)
-        if item.needs_widget and self.view.indexWidget(index) is not None:
-            return                                     # the MessageWidget on top paints this row
-        layout = self.layout_for(item)
-        paint_message(painter, option.rect.topLeft(), item, layout)
-
-
+# ---------------------------------------------------------------- live row
 # ---------------------------------------------------------------- live row
 class MessageWidget(QWidget):
     """A row with active buttons: painted like the others, with real buttons on top."""
@@ -473,24 +443,108 @@ class MessageWidget(QWidget):
                     _paint_disabled_button(painter, element.rect, element)
 
 
+
+
 # ---------------------------------------------------------------- view
-class ChatView(QListView):
+class ChatView(QAbstractScrollArea):
+    """A virtual list: row heights and running offsets live in Python, only visible rows are painted,
+    scrolling blits the viewport, live rows (MessageWidget) are positioned by the view itself."""
+
     def __init__(self) -> None:
         super().__init__()
-        set_bg(self, "bg")
         self.chat_model = ChatModel()
-        self.setModel(self.chat_model)
-        self.delegate = ChatDelegate(self)
-        self.setItemDelegate(self.delegate)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.delegate = LayoutCache()
+        self._offsets: list[int] = [0]                 # top of every row, plus the total height at the end
+        self._widgets: dict[int, QWidget] = {}          # id(item) → live row widget
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setUniformItemSizes(False)
-        self.setMouseTracking(False)
         self.verticalScrollBar().setSingleStep(24)
+        set_bg(self, "bg")
         # measuring off-screen rows waits until a resize pauses, then runs in small idle batches
         self._refine = QTimer(self, singleShot=True, interval=REFINE_DELAY_MS, timeout=self._refine_step)
+
+    # ------------------------------------------------------------ geometry
+    @property
+    def total_height(self) -> int:
+        return self._offsets[-1]
+
+    def doItemsLayout(self) -> None:  # noqa: N802 - kept from the QListView API
+        """Recompute every row's offset (cached heights; estimates for stale rows) and the scroll range."""
+        offsets = [0]
+        total = 0
+        height_for = self.delegate.height_for
+        for row, item in enumerate(self.chat_model.items):
+            total += height_for(row, item)
+            offsets.append(total)
+        self._offsets = offsets
+        bar = self.verticalScrollBar()
+        page = self.viewport().height()
+        bar.setPageStep(max(1, page))
+        bar.setRange(0, max(0, total - page))
+        self._place_widgets()
+        self.viewport().update()
+
+    def visual_rect(self, row: int) -> QRect:
+        top = self._offsets[row] - self.verticalScrollBar().value()
+        return QRect(0, top, self.viewport().width(), self._offsets[row + 1] - self._offsets[row])
+
+    def row_at(self, y: int) -> int:
+        """The row at viewport y, or -1."""
+        content_y = y + self.verticalScrollBar().value()
+        if not self.chat_model.items or content_y < 0 or content_y >= self.total_height:
+            return -1
+        return max(0, bisect_right(self._offsets, content_y) - 1)
+
+    def scroll_to_row(self, row: int) -> None:
+        """Put ``row`` at the top edge (as far as the content allows)."""
+        self.verticalScrollBar().setValue(self._offsets[row])
+
+    def scrollToBottom(self) -> None:  # noqa: N802 - Qt-style name used by the panel
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    # ------------------------------------------------------------ live row widgets
+    def set_row_widget(self, item: Item, widget: Optional[QWidget]) -> None:
+        old = self._widgets.pop(id(item), None)
+        if old is not None and old is not widget:
+            old.hide()
+        if widget is not None:
+            self._widgets[id(item)] = widget
+            widget.show()
+        self._place_widgets()
+
+    def row_widget(self, item: Item) -> Optional[QWidget]:
+        return self._widgets.get(id(item))
+
+    def _place_widgets(self) -> None:
+        if not self._widgets:
+            return
+        rows = {id(item): row for row, item in enumerate(self.chat_model.items) if id(item) in self._widgets}
+        for key, widget in self._widgets.items():
+            row = rows.get(key)
+            if row is not None:
+                widget.setGeometry(self.visual_rect(row))
+
+    # ------------------------------------------------------------ painting and scrolling
+    def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        items = self.chat_model.items
+        if not items:
+            return
+        painter = QPainter(self.viewport())
+        clip = event.rect()
+        scroll = self.verticalScrollBar().value()
+        row = max(0, bisect_right(self._offsets, scroll + clip.top()) - 1)
+        bottom = scroll + clip.bottom()
+        while row < len(items) and self._offsets[row] <= bottom:
+            item = items[row]
+            if id(item) not in self._widgets:
+                paint_message(painter, QPoint(0, self._offsets[row] - scroll), item, self.delegate.layout_for(item))
+            row += 1
+        painter.end()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - Qt API
+        self.viewport().scroll(dx, dy)                  # blit; moves the live row widgets too
 
     # ------------------------------------------------------------ anchor
     def at_bottom(self) -> bool:
@@ -500,26 +554,25 @@ class ChatView(QListView):
     def anchor(self) -> tuple[str, int, int]:
         if self.at_bottom() or not self.chat_model.items:
             return ("bottom", -1, 0)
-        index = self.indexAt(QPoint(10, 1))
-        if not index.isValid():
+        row = self.row_at(1)
+        if row < 0:
             return ("bottom", -1, 0)
-        return ("row", index.row(), self.visualRect(index).top())
+        return ("row", row, self.visual_rect(row).top())
 
     def restore(self, anchor: tuple[str, int, int]) -> None:
         kind, row, offset = anchor
         if kind == "bottom" or row < 0 or row >= self.chat_model.rowCount():
             self.scrollToBottom()
-            return
-        rect = self.visualRect(self.chat_model.index(row))
-        bar = self.verticalScrollBar()
-        bar.setValue(bar.value() + rect.top() - offset)
+        else:
+            self.verticalScrollBar().setValue(self._offsets[row] - offset)
+        self._place_widgets()
 
     def visible_rows(self) -> range:
-        top = self.indexAt(QPoint(10, 1))
-        bottom = self.indexAt(QPoint(10, max(1, self.viewport().height() - 2)))
         last = self.chat_model.rowCount() - 1
-        first_row = top.row() if top.isValid() else max(0, last - 20)
-        last_row = bottom.row() if bottom.isValid() else last
+        top = self.row_at(1)
+        bottom = self.row_at(max(1, self.viewport().height() - 2))
+        first_row = top if top >= 0 else max(0, last - 20)
+        last_row = bottom if bottom >= 0 else last
         return range(max(0, first_row - NEAR_ROWS), min(last, last_row + NEAR_ROWS) + 1)
 
     # ------------------------------------------------------------ width changes
@@ -534,7 +587,7 @@ class ChatView(QListView):
         self.delegate.exact_rows = None
         self.restore(anchor)
         if self.delegate.stale:
-            self._refine.start(REFINE_DELAY_MS)  # restarted by every width change: waits for a pause
+            self._refine.start(REFINE_DELAY_MS)       # restarted by every width change: waits for a pause
 
     def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         anchor = self.anchor()
@@ -542,6 +595,10 @@ class ChatView(QListView):
         if event.size().width() != event.oldSize().width() or self.delegate.width == 0:
             self.relayout(anchor=anchor)
         else:
+            bar = self.verticalScrollBar()
+            page = self.viewport().height()
+            bar.setPageStep(max(1, page))
+            bar.setRange(0, max(0, self.total_height - page))
             self.restore(anchor)
 
     def _refine_step(self) -> None:
@@ -560,7 +617,7 @@ class ChatView(QListView):
         self.doItemsLayout()
         self.restore(anchor)
         if self.delegate.stale:
-            self._refine.start(0)            # next batch at the next idle moment
+            self._refine.start(0)
 
     def refresh_all(self) -> None:
         """Text size or theme changed: re-measure everything now."""

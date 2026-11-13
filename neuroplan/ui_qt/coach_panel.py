@@ -219,20 +219,17 @@ class CoachPanel(QWidget):
 
     def _sync_widgets(self) -> None:
         """Rows with live buttons get a MessageWidget; others are painted."""
-        model = self.view.chat_model
-        wanted = {id(it): it for it in model.items if it.needs_widget}
+        wanted = {id(it): it for it in self.items if it.needs_widget}
         for key in [k for k in self._widgets if k not in wanted]:
             widget = self._widgets.pop(key)
-            row = model.row_of(widget.item)
-            if row >= 0:
-                self.view.setIndexWidget(model.index(row), None)  # type: ignore[arg-type]
+            self.view.set_row_widget(widget.item, None)
             widget.deleteLater()
         for key, item in wanted.items():
             widget = self._widgets.get(key)
             if widget is None:
                 widget = MessageWidget(self.view, item, self._on_row_action)
                 self._widgets[key] = widget
-                self.view.setIndexWidget(model.index(model.row_of(item)), widget)
+                self.view.set_row_widget(item, widget)
             else:
                 widget.rebuild()
         self.view.viewport().update()

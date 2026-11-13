@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWi
 
 from ... import config
 from ...timer import TimerCall
-from ..widgets import Chip, ColorBar, KpiCard, button, card, clear_layout, label, scroll_area
+from ..widgets import Chip, ColorBar, KpiCard, button, card, clear_layout, elided, label, scroll_area
 from . import BaseView
 from .pomodoro import PomodoroWidget
 
@@ -105,7 +105,7 @@ class TodayView(BaseView):
         meta = f"{category} · {b['pomodoro']} · {TYPE_LABEL.get(b['type'], b['type'])} · {b['min']} min"
         if b["locked"]:
             meta += " · locked"
-        body.addWidget(label(meta, "small", wrap=True))
+        body.addWidget(elided(meta, "small"))
         body.addWidget(label(b["task"], None if pending else "muted", wrap=True))
         layout.addLayout(body, 1)
         buttons: dict[str, Any] = {}
