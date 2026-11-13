@@ -30,7 +30,7 @@ rem Qt modules the app does not use are left out (it needs QtCore, QtGui and QtW
     --add-data "assets\neuroplan.ico;assets" ^
     --collect-submodules keyring.backends ^
     --copy-metadata keyring ^
-    --exclude-module tkinter --exclude-module _tkinter --exclude-module customtkinter ^
+    --exclude-module tkinter --exclude-module _tkinter ^
     --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick ^
     --exclude-module PySide6.QtQuickWidgets --exclude-module PySide6.QtOpenGL --exclude-module PySide6.QtOpenGLWidgets ^
     --exclude-module PySide6.QtSql --exclude-module PySide6.QtTest --exclude-module PySide6.QtXml ^

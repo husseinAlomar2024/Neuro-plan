@@ -91,23 +91,12 @@ CHAT_TEXT_SIZES = {"Small": 13, "Medium": 15, "Large": 17}      # chat text px; 
 TEXT_SIZE_NAMES = tuple(CHAT_TEXT_SIZES)
 CHAT_FONT_SIZE = 15            # chat text at "Medium"
 UI_FONT_SIZE = 13              # body text of the rest of the UI at "Medium"
-CHAT_LINE_GAP = 3              # extra px between the lines of a chat bubble (before scaling)
-DIVIDER_WIDTH = 6
-COACH_DEFAULT_WIDTH = 380
+COACH_DEFAULT_WIDTH = 380      # coach panel width (px) after a reset (double-click on the splitter handle)
 COACH_MIN_WIDTH = 300
-COLUMN_MIN_WIDTH = 280         # any column next to a divider
-# The centre view never gets narrower than this (per text size). Measured with tools/centre_min.py: the
-# smallest width at which the Today cards show all four block buttons and unclipped text (661 / 701 / 730),
-# rounded up. The coach divider is clamped to it and the window's minimum width follows from it.
-CENTRE_MIN_WIDTHS = {"Small": 670, "Medium": 710, "Large": 740}
-WINDOW_MIN_HEIGHT = 700
 SUBJECTS_LIST_DEFAULT_WIDTH = 420
 PANE_MAX_WIDTH = 4000
-CHAT_HISTORY_LIMIT = 500       # Qt chat: messages loaded at start (model/view, only visible rows are painted)
-CHAT_RENDERED = 40             # chat messages rendered at start; older ones load when scrolled to the top
-CHAT_LOAD_MORE = 20            # how many older messages each load adds
-RESIZE_DEBOUNCE_MS = 80        # re-wrap / re-fit once, this long after the last <Configure> of a resize
-# divider position settings (unscaled px) and their defaults
+CHAT_HISTORY_LIMIT = 500       # chat messages loaded at start (virtual list: only visible rows are painted)
+# divider positions of older versions (still accepted by set_ui_prefs; the Qt UI saves splitter states)
 PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": SUBJECTS_LIST_DEFAULT_WIDTH}
 # preferences the UI stores directly through set_ui_prefs (not undoable, no plan effect)
 UI_PREFS: dict[str, tuple[str, ...] | None] = {"theme": THEME_NAMES, "text_size": TEXT_SIZE_NAMES,
