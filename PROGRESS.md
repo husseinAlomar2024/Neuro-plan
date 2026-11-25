@@ -1,7 +1,16 @@
 # PROGRESS
 
 ## Current phase
-All phases of SPEC.md §10 (P1–P8) are complete.
+Qt rewrite on branch `qt-ui` (user decision 2026-11-13, see DECISIONS "Qt front end"). Phases Q1–Q7:
+- Q1 shell (dispatcher, palette, stylesheet, splitter, persistence) — done
+- Q2 coach panel and message list — done
+- Q3 Today + Pomodoro — done
+- Q4 Subjects + Reviews — done
+- Q5 Week + Settings — done
+- Q6 ui_check + visual fixes + performance — done (numbers in DECISIONS "Qt front end"; targets not met, reported honestly)
+- Q7 packaging (onedir), switch main.py, remove the Tk UI, update README/SPEC/CLAUDE.md — done
+- Q4 Subjects + Reviews, Q5 Week + Settings, Q6 tools/ui_check.py + visual fixes + performance, Q7 packaging (onedir), switch main.py, remove the Tk UI, update README/SPEC/CLAUDE.md
+Qt code lives in `neuroplan/ui_qt/`; tests `tests/test_qt_*.py` (pytest-qt, offscreen). The CustomTkinter UI, its tests and its dev tools were removed after Q7; customtkinter is no longer a dependency.
 
 ## Done
 - P1: `config.py`, `models.py`, `db/schema.sql`, `db/repository.py`, `seed.py`, `tests/test_repository.py`.
@@ -16,9 +25,15 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 - Post-P8 fixes (2026-11-11): archive/restore/delete buttons and "Show archived" in the Subjects view, "archive X" in the offline parser; multi-intent messages (clause splitting) in the offline parser; chat bubbles wrap to the panel width and re-wrap on resize.
 - Install (2026-11-11): exe data in `%LOCALAPPDATA%\NeuroPlan` with one-time copy of an old database next to the exe, app icon (`assets\neuroplan.ico`), `build_exe.bat` installs the exe and creates the Desktop shortcut; `tests/test_paths.py`.
 - Live provider fix (2026-11-11): provider errors carry the HTTP status and the service's message and are classified (rejected key / access denied / wrong Base URL / unknown model / rate limit or quota / rejected request / no connection); Test connection, chat notice and log show that reason; Base URL, model names and key are cleaned on save and on use; `build_exe.bat` can install while the app is running; `tests/test_provider_errors.py`.
+- Look and layout (2026-11-12): DPI awareness before Tk starts (`ui/dpi.py`), shared Segoe UI fonts (`ui/fonts.py`, chat 15 / UI 13), Text size Small/Medium/Large with Ctrl+Plus/Minus/0, three live themes as tokens in `ui/theme.py` (Midnight, Ivory & Gold, Mist; selector in Settings and a sidebar button), draggable dividers (coach panel, Subjects list) saved via `set_ui_prefs`, bubble text with looser line spacing (`widgets/chat_text.py`); `tests/test_theme.py`, `tests/test_gui_look.py`.
 
+- Smooth dragging (2026-11-12): ghost-line divider drag (resize once on release), debounced re-wrap and pane fit after window resize / maximise; `tests/test_gui_look.py` (50 motion events → one resize, one re-wrap).
+- Flicker-free layout (2026-11-12): snapshot cover during divider apply and maximise/restore (`ui/win32.py`), ghost line as its own popup, Escape/focus-loss cancel, chat scroll anchor, centre minimum width per text size, `tools/drag_check.py` and `tools/centre_min.py`; tests for scroll (D) and limits (F) in `tests/test_gui_look.py`. On-screen result: 0 broken frames for every drag (baseline 14–25), list never blank, scroll kept; maximise 1 / restore 2 distinct cover frames during the Windows animation; release-to-final 540–775 ms (target 300 ms not reached, see DECISIONS).
+- Release-path speed-up (2026-11-12): window-DC snapshot, 40 rendered chat messages with load-older at the top, `tools/profile_apply.py`; drag_check after: coach small 452, min→max 665, min→max at bottom 553, max→min 752, Subjects 372, maximise 643, restore 659 ms (before 680/689/742/760/441/700/869); still 0 broken frames on drags.
 ## Verification
-- `.venv\Scripts\python -m pytest -q` → 359 passed.
+- Qt UI (2026-11-13, branch `qt-ui`): `.venv\Scripts\python -m pytest -q` → 407 passed (Qt tests run offscreen). `build_exe.bat` → onedir build installed to `%LOCALAPPDATA%\NeuroPlan\app`, 86.4 MB in 750 files; data files untouched; Desktop shortcut repointed. Start: 10.5 s on the very first launch after install (cold file cache + virus scan of the new files), 1.6–2.1 s afterwards. The installed exe opened a copy of the real data (2 subjects, 63 messages) and `python main.py` opened a copy of the project database, both without errors in the log.
+- tools/ui_check.py (busy machine, ~20–30 % background CPU): coach splitter drag median 15–23 ms (worst 41–124 ms), Subjects splitter median 16–31 ms (worst 31–132 ms), window resize median 33–82 ms (worst 81–310 ms), chat scroll median 5–11 ms. Targets (median ≤ 16, worst ≤ 50) are not met; an empty Qt window here needs 14 ms per resize pass and 6 ms per splitter pass. PNGs of every view in every theme at 1280x800 and 1024x700 were inspected; the clipping, checkbox-contrast and eliding problems found there were fixed.
+- `.venv\Scripts\python -m pytest -q` → 391 passed (2026-11-12).
 - `build_exe.bat` (2026-11-11, after the provider fix) → `dist\NeuroPlan.exe` (about 29 MB) installed to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe` while the app was running: the running exe was set aside as `NeuroPlan.exe.old`, the database and log were untouched, the shortcut was rewritten. The new exe has not been started yet (the open app is still the old build). The earlier build was smoke-tested from a scratch folder with a redirected `LOCALAPPDATA` (data folder created, old database copied once).
 - Live diagnosis (2026-11-11, 6 requests, allowed for this once): with the installed app's settings and keyring key, Gemini's OpenAI-compatible endpoint answers every chat call, plain or with tools, with HTTP 403 `PERMISSION_DENIED` "The Gemini API free tier is not available for this project" (also for another model). The stored Base URL ended in `/models` (HTTP 404 before the clean-up). The fixed code reports exactly that reason.
 - The app was launched from source on a temp DB, every view shown, an offline chat message answered.
@@ -29,6 +44,7 @@ All phases of SPEC.md §10 (P1–P8) are complete.
 ## Known issues
 - No successful live chat round-trip has been seen yet: the only real endpoint tried (Gemini, see Verification) refuses the project with HTTP 403, so a tool call against a real model, and whether Gemini accepts the full tool list, are still unverified. Everything else about the providers is checked against a mock HTTP transport and a scripted FakeProvider.
 - GUI tests were slow on 2026-11-11 (suite 128 s instead of about 40 s) and one full run was stopped after 400 s without output; the rerun passed.
+- Creating many Tk windows in one test run occasionally fails inside Tk's own start-up on this machine ("couldn't read file …/ttk/entry.tcl", "invalid command name tcl_findLibrary" — Tcl library files that exist); a rerun passes. Not caused by app code. The GUI test fixtures retry the window creation for exactly these errors (`make_app` in `tests/test_gui_smoke.py`).
 - GUI tests need a display; they are skipped automatically without one.
 
 ## Environment

@@ -131,6 +131,10 @@ _SPECS: list[ToolSpec] = [
     ToolSpec("list_reviews", "Due and upcoming reviews.", {}, write=False, llm_visible=False),
     ToolSpec("get_availability", "Weekly availability and overrides.", {}, write=False, llm_visible=False),
     ToolSpec("get_settings", "Editable settings.", {}, write=False, llm_visible=False),
+    # UI preferences (theme, text size, divider positions): stored directly, not undoable, no plan effect,
+    # so it runs on the read path (no snapshot, no action log, no state_changed)
+    ToolSpec("set_ui_prefs", "Store UI preferences.", {"prefs": {"type": "object"}}, ("prefs",), write=False,
+             llm_visible=False),
     ToolSpec("export_data", "Everything as a JSON-serialisable dict.", {}, write=False, llm_visible=False),
     ToolSpec("update_settings", "Change app settings.",
              {"settings": {"type": "object"}}, ("settings",), llm_visible=False),

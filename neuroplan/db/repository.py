@@ -366,9 +366,10 @@ class Repository:
         self._x("UPDATE chat_messages SET actions_json = ? WHERE id = ?",
                 (json.dumps(actions, ensure_ascii=False), message_id))
 
-    def list_messages(self, limit: int = 200, after_id: int = 0) -> list[ChatMessage]:
-        rows = self._q("SELECT * FROM (SELECT * FROM chat_messages WHERE id > ? ORDER BY id DESC LIMIT ?) "
-                       "ORDER BY id", (after_id, limit))
+    def list_messages(self, limit: int = 200, after_id: int = 0, before_id: int = 0) -> list[ChatMessage]:
+        """The newest ``limit`` messages with after_id < id (< before_id when given), oldest first."""
+        rows = self._q("SELECT * FROM (SELECT * FROM chat_messages WHERE id > ? AND (? = 0 OR id < ?) "
+                       "ORDER BY id DESC LIMIT ?) ORDER BY id", (after_id, before_id, before_id, limit))
         return [self._message(r) for r in rows]
 
     def count_messages(self, after_id: int = 0) -> int:

@@ -66,7 +66,13 @@ line and answers the same message in offline mode; the same line is written to `
 - **Subjects** — subjects, units, expected vs. done progress (backlog bar), assessments.
 - **Reviews** — spaced-repetition reviews (1, 3, 7, 16, 35 days) with Again / Hard / Good / Easy.
 - **Settings** — provider, models, key, proactive level, daily AI call cap, end-of-day time, theme,
-  week start, plan horizon, export / import (JSON), reset to demo data.
+  text size, week start, plan horizon, export / import (JSON), reset to demo data.
+
+**Look and layout.** Three themes switch live: *Midnight* (dark, default), *Ivory & Gold* (light) and *Mist*
+(soft neutral) — in Settings or with the theme button at the bottom of the sidebar. *Text size* is
+Small / Medium / Large (chat text 13 / 15 / 17 px, the rest scales with it); **Ctrl+Plus**, **Ctrl+Minus**
+and **Ctrl+0** change it live. Drag the thin dividers between the centre view and the coach panel and
+between the subject list and the form (double-click one to reset it); positions are remembered.
 - **Coach panel** (right) — chat, proactive messages, "Actions executed" badges with **Undo**, confirm cards
   for destructive actions, option buttons for risks and skipped blocks. It collapses to an icon with an
   unread badge.
@@ -79,7 +85,8 @@ line and answers the same message in offline mode; the same line is written to `
 
 The suite uses temporary databases and a fixed date. No test calls a real LLM API: the coach is driven by a
 scripted `FakeProvider`, and the two real providers are checked against an in-process mock HTTP transport.
-The GUI smoke tests are skipped automatically when no display is available.
+The Qt UI tests (pytest-qt) run on Qt's offscreen platform with a 1920x1080 virtual screen, so they need
+no display and never open a window.
 
 ## Build the exe
 
@@ -87,15 +94,19 @@ The GUI smoke tests are skipped automatically when no display is available.
 build_exe.bat
 ```
 
-Produces `dist\NeuroPlan.exe` (PyInstaller, `--noconsole --onefile`, CustomTkinter data files, the SQL
-schema and the app icon bundled), then installs it for the current user:
+Produces `dist\NeuroPlan\` (PyInstaller `--noconsole --onedir`, which starts faster than a single exe;
+Qt modules the app does not use are left out; the SQL schema and the app icon are bundled), then installs
+it for the current user:
 
-- the exe is copied to `%LOCALAPPDATA%\NeuroPlan\NeuroPlan.exe`;
-- a **NeuroPlan** shortcut is created on the Desktop. If the app is running during the build, the old
-  exe is set aside as `NeuroPlan.exe.old` and the new version starts the next time you open the app.
+- the folder is copied to `%LOCALAPPDATA%\NeuroPlan\app` (`NeuroPlan.exe` inside it); the single-file
+  `NeuroPlan.exe` of older builds is removed;
+- the **NeuroPlan** shortcut on the Desktop is created or pointed at the new exe.
 
-The built exe keeps `neuroplan.db` and `neuroplan.log` in `%LOCALAPPDATA%\NeuroPlan`, wherever the exe
-itself is started from. Rebuilding only replaces `NeuroPlan.exe`; the data files are never touched. If an
+The script stops with a clear message if NeuroPlan is running (its files would be locked); close the app
+and run it again.
+
+The built app keeps `neuroplan.db` and `neuroplan.log` in `%LOCALAPPDATA%\NeuroPlan`, wherever the exe
+itself is started from. Rebuilding only replaces the `app` folder; the data files are never touched. If an
 older build left a `neuroplan.db` next to the exe, it is copied (not moved) to the new folder on the first
 run, unless a database already exists there. A run from source (`python main.py`) keeps using the project
 folder, so the two do not share data.
@@ -106,7 +117,7 @@ script to change the design.
 ## How it is put together
 
 ```
-GUI (CustomTkinter)  ──user actions──►  ToolExecutor  ◄──tool calls──  Coach (LLMEngine | OfflineEngine)
+GUI (Qt/PySide6)    ──user actions──►  ToolExecutor  ◄──tool calls──  Coach (LLMEngine | OfflineEngine)
                                             │  validated, transactional, logged, undoable
                                             ▼
                                         Repository (SQLite)  ◄──►  Scheduler (pure functions)
@@ -122,7 +133,9 @@ GUI (CustomTkinter)  ──user actions──►  ToolExecutor  ◄──tool ca
 | `neuroplan/tools/` | `registry.py` (JSON-Schema tool definitions, Anthropic + OpenAI formats), `executor.py` (execution, undo, events) |
 | `neuroplan/coach/` | `coach.py`, `llm_engine.py`, `offline_engine.py`, `providers.py`, `prompts.py` |
 | `neuroplan/timer.py` | pomodoro state machine (no UI code) |
-| `neuroplan/ui/` | app shell, theme, views, coach panel, widgets |
+| `neuroplan/ui_qt/` | Qt (PySide6) UI: `app.py` (window, splitters, wiring), `style.py` (themes, text size), `widgets.py` (painted buttons/cards), `chat.py` + `coach_panel.py` (virtual message list), `views/` |
+| `neuroplan/dispatch.py`, `neuroplan/palette.py` | UI-agnostic dispatcher (worker → UI thread) and the colour tokens of the three themes |
+| `tools/ui_check.py`, `tools/profile_qt.py` | dev tools: on-screen timing of splitter drags / window resizes / chat scrolling, screenshots of every view and theme; per-pass profiles |
 | `tests/` | acceptance tests from SPEC §9 plus extras |
 
 Design rules that are enforced in code and tests:

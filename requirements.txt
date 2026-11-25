@@ -1,4 +1,4 @@
-customtkinter>=5.2
+PySide6-Essentials>=6.7
 anthropic>=0.40
 openai>=1.50
 keyring>=24

@@ -9,7 +9,7 @@ You own this codebase end to end. Build NeuroPlan exactly as specified in `SPEC.
 
 ## Safety boundaries (important because permissions are bypassed)
 - Read and write only inside this project folder. Never touch anything outside it, the registry, system settings, or global Python.
-- Use a local virtual environment with any installed Python 3.11 or newer: run `py --list`, use py -3.13 -m venv .venv, then `.venv\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt`. Install nothing beyond the packages listed in SPEC.md §1.
+- Use a local virtual environment with any installed Python 3.11 or newer: run `py --list`, use py -3.13 -m venv .venv, then `.venv\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt`. Install nothing beyond the packages listed in SPEC.md §1 (the UI is Qt: PySide6-Essentials, tests with pytest-qt).
 - No `git push`, no remote repos, no network calls except pip installs. Tests must never call real LLM APIs (use FakeProvider).
 - Never delete `neuroplan.db` belonging to the user. Tests use temp DBs.
 
@@ -30,7 +30,7 @@ You own this codebase end to end. Build NeuroPlan exactly as specified in `SPEC.
 - Type hints everywhere, dataclasses for models, no global mutable state except the app container.
 - Every constant from SPEC.md §4 lives in `config.py`.
 - UI code never runs SQL and never calls providers directly. It goes through the ToolExecutor and the Coach.
-- Background work on threads; UI updates only via `after()`.
+- Background work on threads; UI updates only through the Dispatcher (Qt queued signal), never from a worker thread.
 
 ## Done means
 `python main.py` launches with seed data and a populated plan, the coach greets the user and works offline, all tests pass, `build_exe.bat` exists and the PyInstaller build succeeds, and README.md explains setup, run, test, and build.

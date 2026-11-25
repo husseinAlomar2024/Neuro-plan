@@ -24,6 +24,7 @@ SOURCES = ("ui", "chat_llm", "chat_offline", "system")
 _WEEKDAY_LOOKUP = {name: i for i, name in enumerate(config.WEEKDAY_NAMES)}
 _WEEKDAY_LOOKUP.update({name.lower(): i for i, name in enumerate(config.WEEKDAY_LONG)})
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_BLOB_RE = re.compile(r"^[A-Za-z0-9+/=]*$")
 ONBOARDING_FIELDS = ("units", "expected", "assessment")
 
 
@@ -491,7 +492,37 @@ class ToolExecutor:
 
     def _t_get_settings(self, a: dict[str, Any]) -> tuple[str, Any]:
         stored = self.repo.all_settings()
-        return "settings", {k: stored.get(k, config.DEFAULT_SETTINGS.get(k, "")) for k in config.EDITABLE_SETTINGS}
+        values = {k: stored.get(k, config.DEFAULT_SETTINGS.get(k, "")) for k in config.EDITABLE_SETTINGS}
+        values["theme"] = config.normalize_theme(values["theme"])
+        for key, default in config.PANE_SETTINGS.items():
+            values[key] = stored.get(key, str(default))
+        for key in config.UI_PREF_BLOBS:
+            values[key] = stored.get(key, "")
+        return "settings", values
+
+    def _t_set_ui_prefs(self, a: dict[str, Any]) -> tuple[str, Any]:
+        """Theme, text size and divider positions; validated, then stored as plain settings."""
+        clean: dict[str, str] = {}
+        for key, raw in a["prefs"].items():
+            if key not in config.UI_PREFS:
+                raise ToolError(f"set_ui_prefs: unknown preference '{key}'")
+            value = str(raw).strip()
+            if key == "theme":
+                value = config.LEGACY_THEMES.get(value, value)
+            allowed = config.UI_PREFS[key]
+            if key in config.UI_PREF_BLOBS:
+                if len(value) > config.UI_PREF_BLOB_MAX or not _BLOB_RE.match(value):
+                    raise ToolError(f"set_ui_prefs: '{key}' must be base64 text")
+                clean[key] = value
+                continue
+            if allowed is not None and value not in allowed:
+                raise ToolError(f"set_ui_prefs: '{key}' must be one of {', '.join(allowed)} (got {value!r})")
+            if allowed is None and not (value.isdigit() and 0 < int(value) <= config.PANE_MAX_WIDTH):
+                raise ToolError(f"set_ui_prefs: '{key}' must be a width in px (got {value!r})")
+            clean[key] = value
+        for key, value in clean.items():
+            self.repo.set_setting(key, value)
+        return "Preferences saved", clean
 
     def _t_export_data(self, a: dict[str, Any]) -> tuple[str, Any]:
         return "Exported all data", self.repo.export_all()
@@ -804,6 +835,8 @@ class ToolExecutor:
                 value = config.clean_base_url(value)
             elif key in config.TEXT_SETTINGS:
                 value = config.clean_pasted(value)
+            elif key == "theme":
+                value = config.LEGACY_THEMES.get(value, value)
             allowed = config.EDITABLE_SETTINGS[key]
             if allowed is not None and value not in allowed:
                 raise ToolError(f"update_settings: '{key}' must be one of {', '.join(allowed)} (got {value!r})")

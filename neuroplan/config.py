@@ -76,13 +76,35 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "proactive_level": "full",
     "daily_llm_call_cap": "60",
     "end_of_day_time": "22:00",
-    "theme": "Dark",
+    "theme": "Midnight",
+    "text_size": "Medium",
     "week_start": "sun",
     "plan_horizon_days": "14",
     "conversation_summary": "",
     "last_briefing_date": "",
 }
 PROVIDERS = ("anthropic", "openai_compat", "offline")
+# ---------------------------------------------------------------- look and layout (UI preferences)
+THEME_NAMES = ("Midnight", "Ivory & Gold", "Mist")
+LEGACY_THEMES = {"Dark": "Midnight", "Light": "Ivory & Gold"}   # values stored by older versions
+CHAT_TEXT_SIZES = {"Small": 13, "Medium": 15, "Large": 17}      # chat text px; every other size scales with it
+TEXT_SIZE_NAMES = tuple(CHAT_TEXT_SIZES)
+CHAT_FONT_SIZE = 15            # chat text at "Medium"
+UI_FONT_SIZE = 13              # body text of the rest of the UI at "Medium"
+COACH_DEFAULT_WIDTH = 380      # coach panel width (px) after a reset (double-click on the splitter handle)
+COACH_MIN_WIDTH = 300
+SUBJECTS_LIST_DEFAULT_WIDTH = 420
+PANE_MAX_WIDTH = 4000
+CHAT_HISTORY_LIMIT = 500       # chat messages loaded at start (virtual list: only visible rows are painted)
+# divider positions of older versions (still accepted by set_ui_prefs; the Qt UI saves splitter states)
+PANE_SETTINGS = {"pane_coach_width": COACH_DEFAULT_WIDTH, "pane_subjects_list": SUBJECTS_LIST_DEFAULT_WIDTH}
+# preferences the UI stores directly through set_ui_prefs (not undoable, no plan effect)
+UI_PREFS: dict[str, tuple[str, ...] | None] = {"theme": THEME_NAMES, "text_size": TEXT_SIZE_NAMES,
+                                               **{key: None for key in PANE_SETTINGS}}
+# saved Qt layout state (QSplitter.saveState / QWidget.saveGeometry), stored as base64 text
+UI_PREF_BLOBS = ("window_geometry", "splitter_main", "splitter_subjects")
+UI_PREF_BLOB_MAX = 8000
+UI_PREFS.update({key: () for key in UI_PREF_BLOBS})
 PROACTIVE_LEVELS = ("off", "light", "full")
 # Settings the UI / tools may change, with their allowed values (None = free text / validated in code)
 EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
@@ -93,7 +115,8 @@ EDITABLE_SETTINGS: dict[str, tuple[str, ...] | None] = {
     "proactive_level": PROACTIVE_LEVELS,
     "daily_llm_call_cap": None,
     "end_of_day_time": None,
-    "theme": ("Dark", "Light"),
+    "theme": THEME_NAMES,
+    "text_size": TEXT_SIZE_NAMES,
     "week_start": ("sun", "mon"),
     "plan_horizon_days": None,
 }
@@ -106,6 +129,13 @@ BASE_URL_ENDPOINT_SUFFIXES = ("/chat/completions", "/models")
 # server accepts strict-schema keywords); the executor validates arguments itself, so nothing is lost
 OPENAI_SCHEMA_DROP = ("format", "additionalProperties")
 ERROR_DETAIL_MAX_CHARS = 300  # how much of a provider's error message is shown and logged
+
+
+def normalize_theme(value: str) -> str:
+    """A stored theme name; values of older versions ("Dark"/"Light") map to their new theme."""
+    text = str(value or "").strip()
+    text = LEGACY_THEMES.get(text, text)
+    return text if text in THEME_NAMES else THEME_NAMES[0]
 
 
 def clean_pasted(value: str) -> str:
